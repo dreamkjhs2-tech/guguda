@@ -1,1 +1,757 @@
 
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-select=no">
+    <title>초등 2학년 맞춤형 구구단 마스터 홈</title>
+    <link href="https://fonts.googleapis.com/css2?family=Gaegu:wght@400;700&family=Nanum+Gothic:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary-color: #ff6b6b;
+            --primary-light: #fff0f0;
+            --secondary-color: #4dadf7;
+            --secondary-light: #e7f5ff;
+            --success-color: #51cf66;
+            --success-light: #ebfbee;
+            --warning-color: #fcc419;
+            --text-color: #2b2b2b;
+            --bg-color: #f8f9fa;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Nanum Gothic', sans-serif;
+            -webkit-user-select: none;
+            user-select: none;
+            -webkit-touch-callout: none;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            padding: 20px 15px;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 650px;
+            background: white;
+            border-radius: 28px;
+            box-shadow: 0 12px 32px rgba(0,0,0,0.08);
+            padding: 32px;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+            overflow: hidden;
+            min-height: 700px;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 25px;
+        }
+
+        h1 {
+            font-family: 'Gaegu', cursive;
+            font-size: 2.8rem;
+            color: var(--primary-color);
+            margin-bottom: 8px;
+        }
+
+        .subtitle {
+            font-size: 1.1rem;
+            color: #777;
+        }
+
+        .tabs {
+            display: flex;
+            background: #eee;
+            border-radius: 16px;
+            padding: 5px;
+            margin-bottom: 25px;
+        }
+
+        .tab-btn {
+            flex: 1;
+            border: none;
+            background: none;
+            padding: 14px;
+            font-size: 1.1rem;
+            font-weight: bold;
+            color: #666;
+            cursor: pointer;
+            border-radius: 12px;
+            transition: all 0.2s;
+        }
+
+        .tab-btn.active {
+            background: white;
+            color: var(--primary-color);
+            box-shadow: 0 3px 8px rgba(0,0,0,0.1);
+        }
+
+        .screen {
+            display: none;
+            flex-direction: column;
+            flex: 1;
+        }
+
+        .screen.active {
+            display: flex;
+        }
+
+        .calendar-title {
+            font-size: 1.3rem;
+            font-weight: bold;
+            margin-bottom: 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .calendar-grid {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 10px;
+            margin-bottom: 30px;
+        }
+
+        .calendar-day-label {
+            text-align: center;
+            font-size: 1rem;
+            font-weight: bold;
+            color: #888;
+            padding-bottom: 6px;
+        }
+
+        .calendar-cell {
+            aspect-ratio: 1;
+            background: #f1f3f5;
+            border-radius: 12px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.1rem;
+            font-weight: bold;
+        }
+
+        .calendar-cell.today {
+            border: 3px solid var(--primary-color);
+            background: var(--primary-light);
+        }
+
+        .calendar-cell .stamp {
+            font-size: 1.5rem;
+            margin-top: 4px;
+        }
+
+        .calendar-cell.pass { background-color: var(--success-light); color: #2b8a3e; }
+        .calendar-cell.fail { background-color: var(--primary-light); color: #c92a2a; }
+
+        .btn-main {
+            background: linear-gradient(135deg, #ff6b6b, #ff8787);
+            color: white;
+            border: none;
+            padding: 20px;
+            border-radius: 20px;
+            font-size: 1.4rem;
+            font-weight: bold;
+            cursor: pointer;
+            box-shadow: 0 6px 16px rgba(255,107,107,0.35);
+            text-align: center;
+            margin-top: auto;
+            transition: transform 0.1s;
+        }
+
+        .btn-main:active {
+            transform: scale(0.97);
+        }
+
+        .btn-weekend {
+            background: linear-gradient(135deg, #4dadf7, #74c0fc);
+            box-shadow: 0 6px 16px rgba(77,173,247,0.35);
+        }
+
+        .wrong-count-badge {
+            background: #e9ecef;
+            padding: 16px;
+            border-radius: 14px;
+            font-size: 1.1rem;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .quiz-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            font-size: 1.2rem;
+            font-weight: bold;
+        }
+
+        .timer-container {
+            width: 100%;
+            height: 12px;
+            background: #eee;
+            border-radius: 6px;
+            margin-bottom: 40px;
+            overflow: hidden;
+        }
+
+        .timer-bar {
+            height: 100%;
+            width: 100%;
+            background-color: var(--warning-color);
+            transition: width 0.1s linear;
+        }
+
+        .question-box {
+            background: #f8f9fa;
+            border-radius: 24px;
+            padding: 60px 20px;
+            text-align: center;
+            font-size: 5rem;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 50px;
+            border: 2px solid #e9ecef;
+            font-family: 'Gaegu', cursive;
+            position: relative;
+        }
+
+        /* ⭕ ❌ 순간 피드백 오버레이 효과 */
+        .feedback-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            border-radius: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 7rem;
+            font-weight: bold;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.15s ease-in-out;
+            background: rgba(255, 255, 255, 0.9);
+        }
+
+        .feedback-overlay.correct {
+            opacity: 1;
+            color: var(--success-color);
+        }
+
+        .feedback-overlay.wrong {
+            opacity: 1;
+            color: var(--primary-color);
+        }
+
+        .options-grid {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            margin-top: auto;
+            margin-bottom: 20px;
+        }
+
+        .option-btn {
+            flex: 1;
+            aspect-ratio: 1;
+            max-width: 90px;
+            background: white;
+            border: 3px solid #dee2e6;
+            border-radius: 50%;
+            font-size: 1.8rem;
+            font-weight: bold;
+            color: #495057;
+            cursor: pointer;
+            transition: all 0.1s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.04);
+        }
+
+        .option-btn:active {
+            transform: scale(0.93);
+        }
+
+        .option-btn.btn-correct {
+            background-color: var(--success-light) !important;
+            border-color: var(--success-color) !important;
+            color: var(--success-color) !important;
+        }
+
+        .option-btn.btn-wrong {
+            background-color: var(--primary-light) !important;
+            border-color: var(--primary-color) !important;
+            color: var(--primary-color) !important;
+        }
+
+        .result-box {
+            text-align: center;
+            padding: 40px 10px;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .result-emoji {
+            font-size: 6rem;
+            margin-bottom: 20px;
+            animation: bounce 1s infinite alternate;
+        }
+
+        @keyframes bounce {
+            from { transform: translateY(0); }
+            to { transform: translateY(-15px); }
+        }
+
+        .result-title {
+            font-size: 2rem;
+            font-weight: bold;
+            margin-bottom: 15px;
+        }
+
+        .result-score {
+            font-size: 1.5rem;
+            margin-bottom: 35px;
+            color: #555;
+        }
+
+        .result-score span {
+            font-weight: bold;
+            color: var(--primary-color);
+        }
+
+        .report-section {
+            margin-bottom: 30px;
+        }
+
+        .report-section h3 {
+            font-size: 1.3rem;
+            margin-bottom: 12px;
+            border-left: 5px solid var(--primary-color);
+            padding-left: 10px;
+        }
+
+        .stats-card {
+            background: #f8f9fa;
+            border-radius: 16px;
+            padding: 20px;
+            display: flex;
+            justify-content: space-around;
+            text-align: center;
+            border: 1px solid #e9ecef;
+        }
+
+        .stat-item .num {
+            font-size: 1.6rem;
+            font-weight: bold;
+            color: var(--primary-color);
+            margin-top: 5px;
+        }
+
+        .stat-item .label {
+            font-size: 0.95rem;
+            color: #777;
+        }
+
+        .wrong-list {
+            max-height: 220px;
+            overflow-y: auto;
+            background: #fff0f0;
+            border-radius: 16px;
+            padding: 16px;
+            font-size: 1.1rem;
+            list-style: none;
+        }
+
+        .wrong-list li {
+            padding: 10px 0;
+            border-bottom: 1px dashed #ffc9c9;
+            color: #c92a2a;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .wrong-list li:last-child {
+            border-bottom: none;
+        }
+
+        .empty-msg {
+            color: #666;
+            text-align: center;
+            padding: 30px 0;
+            font-size: 1.1rem;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <header id="main-header">
+            <h1>구구단 마스터 🚀</h1>
+            <div class="subtitle" id="header-subtitle">매일 10문제! 완벽한 학습 루틴</div>
+        </header>
+
+        <div class="tabs" id="main-tabs">
+            <button class="tab-btn active" onclick="switchTab('home')">오늘의 학습</button>
+            <button class="tab-btn" onclick="switchTab('report')">성적 리포트</button>
+        </div>
+
+        <!-- 1. 메인 홈 화면 -->
+        <div id="screen-home" class="screen active">
+            <div class="calendar-title">
+                <span id="calendar-month">학습 달력</span>
+                <span style="font-size:0.95rem; color:#666;">🔴 통과 | 🔵 미흡</span>
+            </div>
+            <div class="calendar-grid" id="calendar-grid"></div>
+
+            <div class="wrong-count-badge">
+                이번 주 누적 오답 개수: <strong id="home-wrong-count" style="color:var(--primary-color);">0</strong>개
+            </div>
+
+            <button class="btn-main" id="start-btn" onclick="startQuiz(false)">오늘의 시험 시작 (평일)</button>
+            <button class="btn-main btn-weekend" id="start-weekend-btn" onclick="startQuiz(true)" style="margin-top:10px; display:none;">주말 오답 집중 시험 시작</button>
+        </div>
+
+        <!-- 2. 시험 진행 화면 -->
+        <div id="screen-quiz" class="screen">
+            <div class="quiz-header">
+                <div id="quiz-title">오늘의 시험</div>
+                <div id="question-idx">1 / 10</div>
+            </div>
+            <div class="timer-container">
+                <div class="timer-bar" id="timer-bar"></div>
+            </div>
+
+            <div class="question-box" id="question-box">
+                <span id="question-text">7 × 8 = ?</span>
+                <div class="feedback-overlay" id="feedback-overlay">⭕</div>
+            </div>
+            <div class="options-grid" id="options-grid"></div>
+        </div>
+
+        <!-- 3. 결과 화면 -->
+        <div id="screen-result" class="screen">
+            <div class="result-box">
+                <div class="result-emoji" id="result-emoji">🎉</div>
+                <div class="result-title" id="result-title">참 잘했어요!</div>
+                <div class="result-score" id="result-score">맞춘 개수: <span id="correct-count">9</span> / 10</div>
+                <div id="pass-status-text" style="font-weight:bold; margin-bottom:30px; font-size:1.1rem;">오늘의 도장을 획득했습니다!</div>
+                <button class="btn-main" style="width:100%;" onclick="goHome()">홈으로 돌아가기</button>
+            </div>
+        </div>
+
+        <!-- 4. 리포트 화면 -->
+        <div id="screen-report" class="screen">
+            <div class="report-section">
+                <h3>일간 / 누적 요약</h3>
+                <div class="stats-card">
+                    <div class="stat-item">
+                        <div class="label">총 도전 횟수</div>
+                        <div class="num" id="stat-total-attempts">0회</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="label">성공 도장</div>
+                        <div class="num" id="stat-total-passes" style="color:var(--success-color);">0개</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="label">평균 점수</div>
+                        <div class="num" id="stat-avg-score" style="color:var(--secondary-color);">0점</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="report-section" style="flex:1; display:flex; flex-direction:column;">
+                <h3>현재 누적 오답 노트를 채운 문제</h3>
+                <div style="flex:1; min-height:220px; background:#fff0f0; border-radius:16px;">
+                    <ul class="wrong-list" id="report-wrong-list"></ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const STORAGE_KEY = 'gugudan_master_tablet_v4';
+        let state = { history: {}, wrongAnswers: [], totalAttempts: 0, totalPasses: 0, scoreSum: 0 };
+
+        if (localStorage.getItem(STORAGE_KEY)) {
+            state = JSON.parse(localStorage.getItem(STORAGE_KEY));
+        }
+        function saveState() { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
+
+        function getTodayString() {
+            const d = new Date();
+            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        }
+        function isWeekend() { const day = new Date().getDay(); return (day === 0 || day === 6); }
+
+        function switchTab(tab) {
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+            if (tab === 'home') {
+                document.querySelectorAll('.tab-btn')[0].classList.add('active');
+                document.getElementById('screen-home').classList.add('active');
+                renderHome();
+            } else if (tab === 'report') {
+                document.querySelectorAll('.tab-btn')[1].classList.add('active');
+                document.getElementById('screen-report').classList.add('active');
+                renderReport();
+            }
+        }
+
+        function showScreen(screenId) {
+            document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+            document.getElementById(screenId).classList.add('active');
+            if (screenId === 'screen-quiz' || screenId === 'screen-result') {
+                document.getElementById('main-tabs').style.display = 'none';
+                document.getElementById('header-subtitle').style.display = 'none';
+            } else {
+                document.getElementById('main-tabs').style.display = 'flex';
+                document.getElementById('header-subtitle').style.display = 'block';
+            }
+        }
+
+        function renderHome() {
+            const todayStr = getTodayString();
+            document.getElementById('calendar-month').innerText = `${new Date().getMonth() + 1}월 주간 학습현황`;
+            const grid = document.getElementById('calendar-grid');
+            grid.innerHTML = '';
+            
+            ['월', '화', '수', '목', '금', '토', '일'].forEach(l => {
+                const lbl = document.createElement('div');
+                lbl.className = 'calendar-day-label';
+                lbl.innerText = l;
+                grid.appendChild(lbl);
+            });
+
+            const currentObj = new Date();
+            const currentDay = currentObj.getDay();
+            const distanceToMonday = currentDay === 0 ? -6 : 1 - currentDay;
+            const mondayObj = new Date(currentObj);
+            mondayObj.setDate(currentObj.getDate() + distanceToMonday);
+
+            for (let i = 0; i < 7; i++) {
+                const targetDate = new Date(mondayObj);
+                targetDate.setDate(mondayObj.getDate() + i);
+                const dateStr = `${targetDate.getFullYear()}-${String(targetDate.getMonth() + 1).padStart(2, '0')}-${String(targetDate.getDate()).padStart(2, '0')}`;
+                
+                const cell = document.createElement('div');
+                cell.className = 'calendar-cell';
+                if (dateStr === todayStr) cell.classList.add('today');
+                
+                const dayNum = document.createElement('div');
+                dayNum.innerText = targetDate.getDate();
+                cell.appendChild(dayNum);
+
+                if (state.history[dateStr]) {
+                    const stamp = document.createElement('div');
+                    stamp.className = 'stamp';
+                    if (state.history[dateStr].passed) {
+                        cell.classList.add('pass');
+                        stamp.innerText = '🔴';
+                    } else {
+                        cell.classList.add('fail');
+                        stamp.innerText = '🔵';
+                    }
+                    cell.appendChild(stamp);
+                }
+                grid.appendChild(cell);
+            }
+
+            document.getElementById('home-wrong-count').innerText = state.wrongAnswers.length;
+            if (isWeekend()) {
+                document.getElementById('start-btn').style.display = 'none';
+                document.getElementById('start-weekend-btn').style.display = 'block';
+            } else {
+                document.getElementById('start-btn').style.display = 'block';
+                document.getElementById('start-weekend-btn').style.display = 'none';
+            }
+        }
+
+        function renderReport() {
+            document.getElementById('stat-total-attempts').innerText = `${state.totalAttempts}회`;
+            document.getElementById('stat-total-passes').innerText = `${state.totalPasses}개`;
+            const avg = state.totalAttempts > 0 ? Math.round((state.scoreSum / (state.totalAttempts * 10)) * 100) : 0;
+            document.getElementById('stat-avg-score').innerText = `${avg}점`;
+
+            const listEl = document.getElementById('report-wrong-list');
+            listEl.innerHTML = '';
+            if (state.wrongAnswers.length === 0) {
+                listEl.innerHTML = '<div class="empty-msg">틀린 문제가 없습니다. 대단해요! 👍</div>';
+            } else {
+                state.wrongAnswers.forEach(item => {
+                    const li = document.createElement('li');
+                    li.innerHTML = `<span>❌ ${item.q}</span> <strong>정답: ${item.a}</strong>`;
+                    listEl.appendChild(li);
+                });
+            }
+        }
+
+        let quizQuestions = [], currentQuestionIdx = 0, correctCount = 0, timerInterval = null, timeLeft = 50, isWeekendQuiz = false, isAnswerProcessing = false;
+
+        function generateQuestions(isWeekendMode) {
+            let questions = [];
+            if (isWeekendMode && state.wrongAnswers.length > 0) {
+                let tempPool = [...state.wrongAnswers].sort(() => Math.random() - 0.5);
+                questions = tempPool.slice(0, 10);
+                while (questions.length < 10) {
+                    let q = makeSingleRandomQuestion();
+                    if (!questions.some(item => item.q === q.q)) questions.push(q);
+                }
+            } else {
+                while (questions.length < 10) {
+                    let q = makeSingleRandomQuestion();
+                    if (!questions.some(item => item.q === q.q)) questions.push(q);
+                }
+            }
+            return questions;
+        }
+
+        function makeSingleRandomQuestion() {
+            const dan = Math.floor(Math.random() * 8) + 2;
+            const num = Math.floor(Math.random() * 9) + 1;
+            return { q: `${dan} × ${num}`, a: dan * num };
+        }
+
+        function startQuiz(weekendFlag) {
+            isWeekendQuiz = weekendFlag;
+            quizQuestions = generateQuestions(isWeekendQuiz);
+            currentQuestionIdx = 0;
+            correctCount = 0;
+            document.getElementById('quiz-title').innerText = isWeekendQuiz ? "주말 오답 집중 시험" : "오늘의 시험";
+            showScreen('screen-quiz');
+            loadQuestion();
+        }
+
+        function loadQuestion() {
+            if (currentQuestionIdx >= 10) { finishQuiz(); return; }
+            isAnswerProcessing = false;
+
+            // 오버레이 및 버튼 상태 초기화
+            const overlay = document.getElementById('feedback-overlay');
+            overlay.className = 'feedback-overlay';
+
+            document.getElementById('question-idx').innerText = `${currentQuestionIdx + 1} / 10`;
+            const currentQ = quizQuestions[currentQuestionIdx];
+            document.getElementById('question-text').innerText = `${currentQ.q} = ?`;
+
+            const options = [currentQ.a];
+            while (options.length < 5) {
+                let offset = (Math.floor(Math.random() * 5) + 1) * (Math.random() > 0.5 ? 1 : -1);
+                let wrongAns = currentQ.a + offset;
+                if (wrongAns > 0 && !options.includes(wrongAns)) options.push(wrongAns);
+            }
+            options.sort(() => Math.random() - 0.5);
+
+            const grid = document.getElementById('options-grid');
+            grid.innerHTML = '';
+            options.forEach(opt => {
+                const btn = document.createElement('button');
+                btn.className = 'option-btn';
+                btn.innerText = opt;
+                btn.onclick = (e) => handleAnswer(opt, e.target);
+                grid.appendChild(btn);
+            });
+            startTimer();
+        }
+
+        function startTimer() {
+            clearInterval(timerInterval);
+            timeLeft = 50;
+            const bar = document.getElementById('timer-bar');
+            bar.style.width = '100%';
+            bar.style.backgroundColor = 'var(--warning-color)';
+
+            timerInterval = setInterval(() => {
+                timeLeft--;
+                bar.style.width = `${(timeLeft / 50) * 100}%`;
+                if (timeLeft <= 20) bar.style.backgroundColor = 'var(--primary-color)';
+                if (timeLeft <= 0) { clearInterval(timerInterval); handleAnswer(null, null); }
+            }, 100);
+        }
+
+        function handleAnswer(selectedAnswer, clickedBtn) {
+            if (isAnswerProcessing) return; // 연타 방지
+            isAnswerProcessing = true;
+            clearInterval(timerInterval);
+
+            const currentQ = quizQuestions[currentQuestionIdx];
+            const overlay = document.getElementById('feedback-overlay');
+            const isCorrect = (selectedAnswer === currentQ.a);
+
+            if (isCorrect) {
+                correctCount++;
+                if (clickedBtn) clickedBtn.classList.add('btn-correct');
+                overlay.innerText = '⭕';
+                overlay.classList.add('correct');
+
+                if (isWeekendQuiz) {
+                    state.wrongAnswers = state.wrongAnswers.filter(item => item.q !== currentQ.q);
+                }
+            } else {
+                if (clickedBtn) clickedBtn.classList.add('btn-wrong');
+                overlay.innerText = selectedAnswer === null ? '⏰' : '❌';
+                overlay.classList.add('wrong');
+
+                if (!isWeekendQuiz) {
+                    if (!state.wrongAnswers.some(item => item.q === currentQ.q)) state.wrongAnswers.push(currentQ);
+                }
+            }
+
+            currentQuestionIdx++;
+            // 정답/오답 연출을 0.6초간 보여준 후 다음 문제로 이동
+            setTimeout(loadQuestion, 600);
+        }
+
+        function finishQuiz() {
+            const passed = (correctCount >= 8);
+            const todayStr = getTodayString();
+            state.totalAttempts += 1;
+            if (passed) state.totalPasses += 1;
+            state.scoreSum += correctCount;
+
+            if (!state.history[todayStr] || state.history[todayStr].correct < correctCount) {
+                state.history[todayStr] = { correct: correctCount, passed: passed };
+            }
+            saveState();
+
+            document.getElementById('correct-count').innerText = correctCount;
+            const emojiEl = document.getElementById('result-emoji');
+            const titleEl = document.getElementById('result-title');
+            const statusEl = document.getElementById('pass-status-text');
+
+            if (passed) {
+                emojiEl.innerText = '🎉'; titleEl.innerText = '참 잘했어요! 통과';
+                statusEl.innerText = '오늘의 성공 도장을 멋지게 찍었습니다!';
+                statusEl.style.color = 'var(--success-color)';
+            } else {
+                emojiEl.innerText = '😭'; titleEl.innerText = '아쉬워요! 다시 해볼까요?';
+                statusEl.innerText = '8개 이상 맞아야 통과 도장을 받을 수 있어요.';
+                statusEl.style.color = 'var(--primary-color)';
+            }
+            showScreen('screen-result');
+        }
+
+        function goHome() { showScreen('screen-home'); renderHome(); }
+        renderHome();
+    </script>
+</body>
+</html>
