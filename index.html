@@ -3,373 +3,1015 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Z 폴드 2인용 오목</title>
+    <title>온라인 멀티플레이 오목</title>
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
     <style>
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-            user-select: none;
-        }
+        * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
         body {
-            background-color: #f0f2f5;
+            background-color: #eef1f6;
             font-family: 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
             display: flex;
             flex-direction: column;
             align-items: center;
-            justify-content: center;
+            justify-content: flex-start;
             min-height: 100vh;
-            overflow: hidden;
-            color: #333;
-        }
-        .game-container {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            width: 100%;
-            max-width: 600px;
-            padding: 10px;
-        }
-        header {
-            text-align: center;
-            margin-bottom: 6px;
-        }
-        h1 {
-            font-size: 1.2rem;
             color: #2c3e50;
+            padding: 10px;
         }
-        /* 스코어보드 바 */
-        .score-board {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            width: 100%;
-            background: #fff;
-            padding: 6px 15px;
-            border-radius: 10px;
-            box-shadow: 0 2px 6px rgba(0,0,0,0.06);
-            margin-bottom: 8px;
-            font-size: 0.85rem;
-            font-weight: bold;
-        }
-        .score-text {
-            color: #555;
-        }
-        .btn-reset-score {
-            background: #e0e0e0;
-            border: none;
-            padding: 4px 8px;
-            border-radius: 4px;
-            font-size: 0.75rem;
-            cursor: pointer;
-        }
+        .screen { display: none; width: 100%; max-width: 680px; flex-direction: column; gap: 12px; }
+        .screen.active { display: flex; }
 
-        /* 상태 바 */
-        .status-bar {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            width: 100%;
-            background: #fff;
-            padding: 10px 12px;
-            border-radius: 12px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-            margin-bottom: 10px;
+        /* 공통 카드 및 레이아웃 */
+        .card {
+            background: #fff; width: 100%; padding: 16px; border-radius: 14px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.06);
         }
-        .player-info {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            font-size: 0.85rem;
-            padding: 6px 10px;
-            border-radius: 8px;
-            transition: all 0.2s;
-            width: 30%;
-            text-align: center;
+        h2 { font-size: 1.25rem; margin-bottom: 10px; color: #1a252f; display: flex; justify-content: space-between; align-items: center; }
+        h3 { font-size: 1rem; margin-bottom: 8px; color: #34495e; }
+
+        /* 버튼 및 인풋 */
+        .input-box {
+            width: 100%; padding: 11px 14px; border: 1px solid #ccd1d9; border-radius: 8px;
+            font-size: 0.95rem; outline: none; user-select: text;
         }
-        .player-info.active {
-            background-color: #e3f2fd;
-            border: 2px solid #2196f3;
-        }
-        .player-name {
-            font-weight: bold;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            gap: 4px;
-            margin-bottom: 2px;
-            font-size: 0.9rem;
-            color: #111;
-        }
-        .player-name span {
-            font-size: 0.75rem;
-            color: #666;
-        }
-        .undo-status {
-            font-size: 0.75rem;
-            color: #888;
-            margin-top: 2px;
-        }
-        .undo-status.available {
-            color: #9c27b0;
-            font-weight: bold;
-        }
-        .timer {
-            font-size: 1.1rem;
-            font-weight: bold;
-            color: #e74c3c;
-            margin-top: 2px;
-        }
-        .controls-top {
-            display: flex;
-            flex-direction: column;
-            gap: 5px;
-            align-items: center;
-        }
+        .input-box:focus { border-color: #2196f3; }
         .btn {
-            background-color: #607d8b;
-            color: white;
-            border: none;
-            padding: 7px 10px;
-            border-radius: 6px;
-            font-size: 0.8rem;
-            font-weight: bold;
-            cursor: pointer;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            background-color: #2196f3; color: white; border: none; padding: 10px 16px;
+            border-radius: 8px; font-size: 0.9rem; font-weight: bold; cursor: pointer;
+            transition: transform 0.1s, opacity 0.2s; white-space: nowrap;
         }
-        .btn:active {
-            transform: scale(0.95);
-        }
-        .btn-pause { background-color: #ff9800; }
-        .btn-undo { background-color: #9c27b0; }
-        .btn-undo:disabled { background-color: #ccc; cursor: not-allowed; }
+        .btn:active { transform: scale(0.97); }
+        .btn:disabled { background-color: #b0bec5 !important; cursor: not-allowed; opacity: 0.7; }
+        .btn-green { background-color: #2ecc71; }
+        .btn-orange { background-color: #f39c12; }
+        .btn-red { background-color: #e74c3c; }
+        .btn-purple { background-color: #9b59b6; }
+        .btn-gray { background-color: #7f8c8d; }
+        .btn-sm { padding: 6px 12px; font-size: 0.8rem; border-radius: 6px; }
 
-        /* 오목판 영역 */
-        .board-wrapper {
+        /* 대기실 방 목록 & 기록 */
+        .room-list, .history-list {
+            width: 100%; max-height: 210px; min-height: 120px; overflow-y: auto;
+            border: 1px solid #e1e8ed; border-radius: 8px; padding: 8px; background: #f8f9fa;
+        }
+        .room-item {
+            display: flex; justify-content: space-between; align-items: center;
+            background: #fff; padding: 10px 12px; border-radius: 8px; margin-bottom: 6px;
+            border: 1px solid #e9ecef; font-size: 0.9rem;
+        }
+        .badge { padding: 4px 8px; border-radius: 6px; font-size: 0.75rem; font-weight: bold; }
+        .badge-open { background: #e8f8f5; color: #117a65; }
+        .badge-full { background: #fef9e7; color: #b7950b; }
+        .badge-playing { background: #fdedec; color: #c0392b; }
+
+        /* 채팅 영역 */
+        .chat-box {
+            width: 100%; height: 150px; overflow-y: auto; border: 1px solid #e1e8ed;
+            border-radius: 8px; padding: 10px; background: #f8f9fa; margin-bottom: 8px;
+            font-size: 0.85rem; display: flex; flex-direction: column; gap: 4px;
+        }
+        .chat-msg { line-height: 1.4; word-break: break-all; }
+        .chat-msg b { color: #2980b9; }
+        .chat-msg.system { color: #e67e22; font-weight: bold; text-align: center; margin: 2px 0; }
+        .chat-input-row { display: flex; gap: 6px; }
+
+        /* 게임방 플레이어 슬롯 */
+        .players-bar {
+            display: grid; grid-template-columns: 1fr auto 1fr; gap: 8px; align-items: center; width: 100%;
+        }
+        .player-card {
+            background: #f8f9fa; border: 2px solid #dfe6e9; border-radius: 10px; padding: 10px;
+            display: flex; flex-direction: column; align-items: center; text-align: center; position: relative;
+        }
+        .player-card.active-turn { background: #e3f2fd; border-color: #2196f3; }
+        .player-card.ready { border-color: #2ecc71; background: #eafaf1; }
+        .p-role { font-size: 0.75rem; color: #7f8c8d; font-weight: bold; }
+        .p-name { font-size: 1rem; font-weight: bold; margin: 2px 0; color: #2c3e50; }
+        .p-meta { font-size: 0.75rem; color: #8e44ad; font-weight: bold; }
+        .p-timer { font-size: 1.15rem; font-weight: bold; color: #e74c3c; margin-top: 4px; font-variant-numeric: tabular-nums; }
+        .ready-tag {
+            font-size: 0.7rem; padding: 2px 6px; border-radius: 4px; margin-top: 4px;
+            background: #dfe6e9; color: #636e72; font-weight: bold;
+        }
+        .ready-tag.on { background: #2ecc71; color: #fff; }
+
+        /* 오목판 */
+        .board-container {
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            background: #dcb35c; padding: 10px; border-radius: 10px;
+            box-shadow: inset 0 0 8px rgba(0,0,0,0.2), 0 6px 16px rgba(0,0,0,0.12);
             position: relative;
-            background-color: #dcb35c;
-            padding: 10px;
-            border-radius: 8px;
-            box-shadow: 0 8px 20px rgba(0,0,0,0.15);
         }
-        canvas {
-            display: block;
-            touch-action: none;
-            cursor: pointer;
+        canvas { display: block; touch-action: none; cursor: pointer; }
+        .board-overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.55); border-radius: 10px;
+            display: none; flex-direction: column; justify-content: center; align-items: center;
+            color: white; z-index: 10; text-align: center; padding: 20px;
         }
+        .board-overlay.show { display: flex; }
 
-        /* 모달 공통 */
-        .modal {
-            position: fixed;
-            top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.5);
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            z-index: 100;
-            display: none;
+        /* 전적 기록 아이템 */
+        .history-item {
+            font-size: 0.8rem; padding: 6px 8px; border-bottom: 1px solid #eee;
+            display: flex; justify-content: space-between; color: #555;
         }
-        .modal-content {
-            background: white;
-            padding: 25px;
-            border-radius: 14px;
-            text-align: center;
-            width: 85%;
-            max-width: 320px;
-            box-shadow: 0 10px 25px rgba(0,0,0,0.2);
-        }
-        .modal-content h2 {
-            margin-bottom: 15px;
-            font-size: 1.3rem;
-        }
-        .modal-input {
-            width: 100%;
-            padding: 10px;
-            margin-bottom: 15px;
-            border: 1px solid #ccc;
-            border-radius: 6px;
-            font-size: 1rem;
-            text-align: center;
-        }
-        .modal-btn {
-            background-color: #2196f3;
-            color: white;
-            border: none;
-            padding: 10px 20px;
-            border-radius: 6px;
-            font-size: 1rem;
-            font-weight: bold;
-            cursor: pointer;
-            margin-top: 5px;
-        }
+        .history-item:last-child { border-bottom: none; }
     </style>
 </head>
 <body>
 
-    <div class="game-container">
-        <header>
-            <h1>Z 폴드 2인용 오목</h1>
-        </header>
+    <!-- [1] 닉네임 설정 화면 -->
+    <div id="nicknameScreen" class="screen active" style="max-width: 420px; margin-top: 15vh;">
+        <div class="card" style="text-align: center; padding: 28px 20px;">
+            <h2 style="justify-content: center; margin-bottom: 8px;">⚫⚪ 온라인 오목 대전</h2>
+            <p style="color: #666; font-size: 0.9rem; margin-bottom: 18px;">대기실과 게임에서 사용할 닉네임을 입력하세요</p>
+            <input type="text" id="nicknameInput" class="input-box" placeholder="닉네임 입력 (최대 10자)" maxlength="10" style="text-align: center; margin-bottom: 12px;" onkeypress="if(event.key==='Enter') enterLobby()">
+            <button class="btn" style="width: 100%; padding: 12px;" onclick="enterLobby()">대기실 입장</button>
+        </div>
+    </div>
 
-        <!-- 스코어보드 -->
-        <div class="score-board">
-            <span id="score-display" class="score-text">전적: 흑돌 (0승) vs 백돌 (0승)</span>
-            <button class="btn-reset-score" onclick="resetScore()">전적 초기화</button>
+    <!-- [2] 대기실 화면 -->
+    <div id="lobbyScreen" class="screen">
+        <!-- 상단 내 정보 & 방 만들기 -->
+        <div class="card">
+            <h2>
+                <span>👋 <span id="lobbyMyName"></span>님 환영합니다</span>
+                <button class="btn btn-green" onclick="createRoom()">+ 방 만들기</button>
+            </h2>
+            <h3>실시간 방 리스트</h3>
+            <div id="roomList" class="room-list">
+                <p style="text-align: center; color: #888; margin-top: 35px;">생성된 방이 없습니다. 방을 만들어 보세요!</p>
+            </div>
         </div>
 
-        <!-- 상단 정보 및 컨트롤 -->
-        <div class="status-bar">
-            <!-- 흑돌 정보 -->
-            <div id="player1-box" class="player-info active">
-                <div class="player-name" onclick="openNicknameModal(1)">
-                    <span id="p1-name">흑돌</span> <span>✏️</span>
+        <!-- 대기실 전체 채팅 -->
+        <div class="card">
+            <h3>💬 대기실 실시간 채팅</h3>
+            <div id="lobbyChatBox" class="chat-box"></div>
+            <div class="chat-input-row">
+                <input type="text" id="lobbyChatInput" class="input-box" placeholder="대기실에 메시지 입력..." maxlength="100" onkeypress="if(event.key==='Enter') sendLobbyChat()">
+                <button class="btn" onclick="sendLobbyChat()">전송</button>
+            </div>
+        </div>
+
+        <!-- 최근 승패 이력 및 게임시간 기록 -->
+        <div class="card">
+            <h3>🏆 최근 대국 승패 이력 & 소요 시간</h3>
+            <div id="matchHistoryList" class="history-list" style="max-height: 140px; min-height: 80px;">
+                <p style="text-align: center; color: #888; margin-top: 20px;">아직 기록된 대국이 없습니다.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- [3] 게임방 화면 (대기 + 대국 + 방 채팅) -->
+    <div id="roomScreen" class="screen">
+        <!-- 상단 방 정보 및 컨트롤 -->
+        <div class="card" style="padding: 12px 16px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                <div>
+                    <span id="roomStatusBadge" class="badge badge-open">참여가능</span>
+                    <strong id="roomTitleText" style="margin-left: 6px; font-size: 0.95rem;">방</strong>
                 </div>
-                <div id="undo-status-1" class="undo-status available">무르기 (1/1)</div>
-                <span id="timer-black" class="timer">01:00</span>
-            </div>
-
-            <!-- 중앙 컨트롤 -->
-            <div class="controls-top">
-                <button class="btn btn-undo" id="btn-undo" onclick="undoMove()">무르기</button>
-                <button class="btn btn-pause" onclick="togglePause()">일시정지</button>
-            </div>
-
-            <!-- 백돌 정보 -->
-            <div id="player2-box" class="player-info">
-                <div class="player-name" onclick="openNicknameModal(2)">
-                    <span id="p2-name">백돌</span> <span>✏️</span>
+                <div style="font-size: 0.85rem; font-weight: bold; color: #34495e;">
+                    이번 방 전적: <span id="roomScoreText">흑 0승 vs 백 0승</span>
                 </div>
-                <div id="undo-status-2" class="undo-status available">무르기 (1/1)</div>
-                <span id="timer-white" class="timer">01:00</span>
+            </div>
+
+            <!-- 플레이어 2명 슬롯 -->
+            <div class="players-bar">
+                <!-- 흑돌 (방장) -->
+                <div id="cardHost" class="player-card">
+                    <span class="p-role">⚫ 흑돌 (방장/선공)</span>
+                    <span id="hostNameDisplay" class="p-name">-</span>
+                    <span id="hostUndoDisplay" class="p-meta">무르기 쿠폰: 1개</span>
+                    <span id="hostTimerDisplay" class="p-timer">01:00</span>
+                    <span id="hostReadyTag" class="ready-tag">준비 대기</span>
+                </div>
+
+                <!-- 중앙 컨트롤 버튼 모음 -->
+                <div style="display: flex; flex-direction: column; gap: 6px; align-items: center;">
+                    <button id="btnReady" class="btn btn-green btn-sm" onclick="toggleReady()">준비 완료</button>
+                    <button id="btnKick" class="btn btn-red btn-sm" style="display: none;" onclick="kickGuest()">내보내기</button>
+                    <button id="btnUndo" class="btn btn-purple btn-sm" style="display: none;" onclick="useUndoCoupon()">무르기(1)</button>
+                    <button id="btnPause" class="btn btn-orange btn-sm" style="display: none;" onclick="togglePauseGame()">일시정지</button>
+                    <button id="btnLeave" class="btn btn-gray btn-sm" onclick="leaveRoom()">퇴장</button>
+                </div>
+
+                <!-- 백돌 (참여자) -->
+                <div id="cardGuest" class="player-card">
+                    <span class="p-role">⚪ 백돌 (참여자/후공)</span>
+                    <span id="guestNameDisplay" class="p-name">대기 중...</span>
+                    <span id="guestUndoDisplay" class="p-meta">무르기 쿠폰: 1개</span>
+                    <span id="guestTimerDisplay" class="p-timer">01:00</span>
+                    <span id="guestReadyTag" class="ready-tag">입장 대기</span>
+                </div>
             </div>
         </div>
 
-        <!-- 오목판 -->
-        <div class="board-wrapper">
-            <canvas id="omokBoard"></canvas>
-        </div>
-    </div>
+        <!-- 중앙 오목판 -->
+        <div class="board-container">
+            <canvas id="omokCanvas"></canvas>
 
-    <!-- 닉네임 변경 모달 -->
-    <div id="nicknameModal" class="modal">
-        <div class="modal-content">
-            <h2>닉네임 설정</h2>
-            <input type="text" id="nicknameInput" class="modal-input" placeholder="이름을 입력하세요" maxlength="10">
-            <button class="modal-btn" onclick="saveNickname()">확인</button>
+            <!-- 대기 / 일시정지 / 결과 오버레이 -->
+            <div id="boardOverlay" class="board-overlay show">
+                <h2 id="overlayTitle" style="color: #fff; justify-content: center; margin-bottom: 8px;">상대방을 기다리는 중...</h2>
+                <p id="overlayDesc" style="font-size: 0.9rem; margin-bottom: 15px; color: #ddd;">두 플레이어가 모두 [준비 완료]를 누르면 게임이 시작됩니다.</p>
+                <button id="overlayActionBtn" class="btn btn-orange" style="display: none;" onclick="togglePauseGame()">일시정지 해제</button>
+            </div>
         </div>
-    </div>
 
-    <!-- 일시정지 모달 -->
-    <div id="pauseModal" class="modal">
-        <div class="modal-content">
-            <h2>일시정지 중</h2>
-            <p style="margin-bottom: 20px; color: #666;">게시판이 일시 중지되었습니다.</p>
-            <button class="modal-btn" onclick="togglePause()">게임 재개</button>
-        </div>
-    </div>
-
-    <!-- 게임 종료 모달 -->
-    <div id="gameOverModal" class="modal">
-        <div class="modal-content">
-            <h2 id="winnerAnnouncement">흑돌 승리!</h2>
-            <button class="modal-btn" onclick="resetGame()">다음 판 하기</button>
+        <!-- 방 내부 1:1 채팅 -->
+        <div class="card" style="padding: 12px 16px;">
+            <h3>💬 방 대화창</h3>
+            <div id="roomChatBox" class="chat-box" style="height: 110px;"></div>
+            <div class="chat-input-row">
+                <input type="text" id="roomChatInput" class="input-box" placeholder="상대방에게 메시지 입력..." maxlength="100" onkeypress="if(event.key==='Enter') sendRoomChat()">
+                <button class="btn" onclick="sendRoomChat()">전송</button>
+            </div>
         </div>
     </div>
 
     <script>
-        const canvas = document.getElementById('omokBoard');
-        const ctx = canvas.getContext('2d');
-
-        const BOARD_SIZE = 15;
-        let cellSize, boardSizePx;
-        let board = Array(BOARD_SIZE).fill(null).map(() => Array(BOARD_SIZE).fill(0));
-        let turn = 1; // 1: 흑돌, 2: 백돌
-        let history = [];
-        
-        // 플레이어 정보 및 전적
-        let players = {
-            1: { name: '흑돌', canUndo: true },
-            2: { name: '백돌', canUndo: true }
+        // ==========================================
+        // 1. Firebase 초기화
+        // ==========================================
+        const firebaseConfig = {
+            apiKey: "AIzaSyDXbfwJwByr0P9grU4QchVi7C2kf7WwutE",
+            authDomain: "omok-94ab2.firebaseapp.com",
+            databaseURL: "https://omok-94ab2-default-rtdb.firebaseio.com",
+            projectId: "omok-94ab2",
+            storageBucket: "omok-94ab2.firebasestorage.app",
+            messagingSenderId: "553777902232",
+            appId: "1:553777902232:web:05efbfdcef46b73b9dd6ed"
         };
-        let stats = { 1: 0, 2: 0 };
-        let editingPlayer = null;
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.database();
 
-        // 타이머 관련
-        let timeLeft = 60;
-        let timerInterval = null;
-        let isPaused = false;
-        let isGameOver = false;
+        // 내 클라이언트 상태
+        const myId = 'user_' + Math.random().toString(36).substr(2, 8);
+        let myNickname = "";
+        let currentRoomId = null;
+        let myRole = null; // 'host' (흑돌=1) 또는 'guest' (백돌=2)
+        let currentRoomData = null;
 
-        function resizeBoard() {
-            const maxWidth = Math.min(window.innerWidth - 30, 480);
-            boardSizePx = maxWidth;
-            canvas.width = boardSizePx;
-            canvas.height = boardSizePx;
-            cellSize = boardSizePx / BOARD_SIZE;
+        // 리스너 참조 보관용
+        let roomRef = null;
+        let roomChatRef = null;
+        let localTimerInterval = null;
+        let lastRecordedGameStart = 0; // 중복 전적 저장 방지
+
+        // 오목판 캔버스 설정
+        const BOARD_SIZE = 15;
+        const canvas = document.getElementById('omokCanvas');
+        const ctx = canvas.getContext('2d');
+        let cellSize = 28;
+        let boardPx = 420;
+        let localBoard = Array(BOARD_SIZE).fill(null).map(() => Array(BOARD_SIZE).fill(0));
+        let lastMovePos = null;
+
+        // ==========================================
+        // 2. 화면 전환 및 대기실 진입
+        // ==========================================
+        function showScreen(screenId) {
+            document.querySelectorAll('.screen').forEach(el => el.classList.remove('active'));
+            document.getElementById(screenId).classList.add('active');
+            if (screenId === 'roomScreen') {
+                setTimeout(resizeCanvas, 50);
+            }
+        }
+
+        function enterLobby() {
+            const nameVal = document.getElementById('nicknameInput').value.trim();
+            if (!nameVal) {
+                alert('닉네임을 입력해주세요!');
+                return;
+            }
+            myNickname = nameVal;
+            document.getElementById('lobbyMyName').innerText = myNickname;
+            showScreen('lobbyScreen');
+
+            initLobbyListeners();
+        }
+
+        let lobbyInitialized = false;
+        function initLobbyListeners() {
+            if (lobbyInitialized) return;
+            lobbyInitialized = true;
+
+            // 1) 실시간 방 목록 감시
+            db.ref('rooms').on('value', snapshot => {
+                const rooms = snapshot.val();
+                const listEl = document.getElementById('roomList');
+                listEl.innerHTML = '';
+
+                if (!rooms) {
+                    listEl.innerHTML = '<p style="text-align: center; color: #888; margin-top: 35px;">생성된 방이 없습니다. 방을 만들어 보세요!</p>';
+                    return;
+                }
+
+                Object.keys(rooms).forEach(rId => {
+                    const r = rooms[rId];
+                    if (!r || !r.host) return;
+
+                    // 상태 분류: waiting(참여가능), full(참여불가능-게임전), playing(게임중)
+                    let badgeClass = 'badge-open';
+                    let statusText = '참여가능 (1/2)';
+                    let canJoin = true;
+
+                    if (r.status === 'playing') {
+                        badgeClass = 'badge-playing';
+                        statusText = '게임중 (2/2)';
+                        canJoin = false;
+                    } else if (r.guest) {
+                        badgeClass = 'badge-full';
+                        statusText = '참여불가능 (2/2)';
+                        canJoin = false;
+                    }
+
+                    const item = document.createElement('div');
+                    item.className = 'room-item';
+                    item.innerHTML = `
+                        <div>
+                            <span class="badge ${badgeClass}">${statusText}</span>
+                            <strong style="margin-left: 8px;">${escapeHtml(r.host.name)}님의 방</strong>
+                            ${r.guest ? `<span style="font-size:0.8rem; color:#666;"> vs ${escapeHtml(r.guest.name)}</span>` : ''}
+                        </div>
+                        ${canJoin 
+                            ? `<button class="btn btn-orange btn-sm" onclick="joinRoom('${rId}')">참여</button>` 
+                            : `<button class="btn btn-sm" disabled>불가</button>`}
+                    `;
+                    listEl.appendChild(item);
+                });
+            });
+
+            // 2) 대기실 채팅 감시 (최근 40개)
+            db.ref('lobbyChat').limitToLast(40).on('value', snapshot => {
+                const chatBox = document.getElementById('lobbyChatBox');
+                chatBox.innerHTML = '';
+                snapshot.forEach(child => {
+                    const m = child.val();
+                    const div = document.createElement('div');
+                    div.className = 'chat-msg';
+                    div.innerHTML = `<b>${escapeHtml(m.name)}:</b> ${escapeHtml(m.text)}`;
+                    chatBox.appendChild(div);
+                });
+                chatBox.scrollTop = chatBox.scrollHeight;
+            });
+
+            // 3) 최근 승패 이력 및 게임 시간 감시 (최근 20개)
+            db.ref('matchHistory').limitToLast(20).on('value', snapshot => {
+                const histEl = document.getElementById('matchHistoryList');
+                histEl.innerHTML = '';
+                if (!snapshot.exists()) {
+                    histEl.innerHTML = '<p style="text-align: center; color: #888; margin-top: 20px;">아직 기록된 대국이 없습니다.</p>';
+                    return;
+                }
+                const items = [];
+                snapshot.forEach(child => items.push(child.val()));
+                items.reverse().forEach(h => {
+                    const div = document.createElement('div');
+                    div.className = 'history-item';
+                    div.innerHTML = `
+                        <span>🏆 <b>${escapeHtml(h.winner)}</b> 승 (패: ${escapeHtml(h.loser)}) - ${escapeHtml(h.reason)}</span>
+                        <span style="color:#2980b9; font-weight:bold;">⏱️ ${formatDuration(h.durationSec)}</span>
+                    `;
+                    histEl.appendChild(div);
+                });
+            });
+        }
+
+        function sendLobbyChat() {
+            const input = document.getElementById('lobbyChatInput');
+            const text = input.value.trim();
+            if (!text) return;
+            db.ref('lobbyChat').push({
+                name: myNickname,
+                text: text,
+                time: firebase.database.ServerValue.TIMESTAMP
+            });
+            input.value = '';
+        }
+
+        // ==========================================
+        // 3. 방 만들기 / 방 참여 / 방 내부 동기화
+        // ==========================================
+        function createRoom() {
+            const newRoomId = 'room_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4);
+            currentRoomId = newRoomId;
+            myRole = 'host';
+
+            const initialRoomData = {
+                roomId: newRoomId,
+                status: 'waiting', // waiting | full | playing
+                host: { id: myId, name: myNickname, ready: false, undoLeft: 1, wins: 0 },
+                guest: null,
+                turn: 1,
+                turnStartTime: Date.now(),
+                remainingWhenPaused: 60,
+                isPaused: false,
+                pausedBy: "",
+                gameStartTime: 0,
+                moves: [],
+                winner: 0,
+                winReason: ""
+            };
+
+            roomRef = db.ref('rooms/' + newRoomId);
+            roomRef.set(initialRoomData).then(() => {
+                // 방장이 브라우저를 닫으면 방 자동 삭제
+                roomRef.onDisconnect().remove();
+                enterRoomView(newRoomId);
+            }).catch(err => {
+                alert('방 생성 오류: Firebase 데이터베이스 규칙(Rules)이 .read/.write: true 인지 확인해주세요.\n' + err.message);
+            });
+        }
+
+        function joinRoom(rId) {
+            const targetRef = db.ref('rooms/' + rId);
+            targetRef.once('value', snapshot => {
+                const r = snapshot.val();
+                if (!r || r.guest || r.status !== 'waiting') {
+                    alert('이미 꽉 찼거나 사라진 방입니다.');
+                    return;
+                }
+
+                currentRoomId = rId;
+                myRole = 'guest';
+                roomRef = targetRef;
+
+                const guestData = { id: myId, name: myNickname, ready: false, undoLeft: 1, wins: 0 };
+                roomRef.update({
+                    guest: guestData,
+                    status: 'full'
+                });
+
+                // 게스트가 연결이 끊기면 게스트 슬롯 비우기
+                roomRef.child('guest').onDisconnect().remove();
+                enterRoomView(rId);
+                pushRoomSystemChat(`${myNickname}님이 방에 입장했습니다.`);
+            });
+        }
+
+        function enterRoomView(rId) {
+            showScreen('roomScreen');
+            document.getElementById('roomChatBox').innerHTML = '';
+
+            // 방 내부 상태 실시간 감시
+            roomRef.on('value', snapshot => {
+                const data = snapshot.val();
+                if (!data) {
+                    // 방장이 나갔거나 방이 폭파됨
+                    alert('방장이 퇴장하여 방이 종료되었습니다.');
+                    cleanupRoomAndReturn();
+                    return;
+                }
+
+                // 내가 게스트인데 강퇴당했거나 목록에서 사라진 경우
+                if (myRole === 'guest' && (!data.guest || data.guest.id !== myId)) {
+                    alert('방장에 의해 방에서 내보내졌습니다.');
+                    cleanupRoomAndReturn();
+                    return;
+                }
+
+                // 게스트가 도중에 나간 경우 상태 보정 (방장이 수행)
+                if (myRole === 'host' && !data.guest && data.status !== 'waiting') {
+                    roomRef.update({
+                        status: 'waiting',
+                        'host/ready': false,
+                        isPaused: false,
+                        moves: [],
+                        winner: 0
+                    });
+                    return;
+                }
+
+                currentRoomData = data;
+                renderRoomState(data);
+
+                // 방장이 양쪽 준비 완료를 감지하면 즉시 게임 시작 트리거
+                if (myRole === 'host' && data.status === 'full' && data.host && data.guest) {
+                    if (data.host.ready && data.guest.ready) {
+                        startNewMatchInRoom();
+                    }
+                }
+            });
+
+            // 방 채팅 감시
+            roomChatRef = db.ref('roomChats/' + rId);
+            if (myRole === 'host') {
+                roomChatRef.onDisconnect().remove();
+            }
+            roomChatRef.limitToLast(40).on('value', snapshot => {
+                const box = document.getElementById('roomChatBox');
+                box.innerHTML = '';
+                snapshot.forEach(c => {
+                    const m = c.val();
+                    const div = document.createElement('div');
+                    div.className = 'chat-msg ' + (m.system ? 'system' : '');
+                    div.innerHTML = m.system ? escapeHtml(m.text) : `<b>${escapeHtml(m.name)}:</b> ${escapeHtml(m.text)}`;
+                    box.appendChild(div);
+                });
+                box.scrollTop = box.scrollHeight;
+            });
+
+            // 타이머 루프 시작
+            if (localTimerInterval) clearInterval(localTimerInterval);
+            localTimerInterval = setInterval(tickRoomTimer, 250);
+        }
+
+        function pushRoomSystemChat(msg) {
+            if (!currentRoomId) return;
+            db.ref('roomChats/' + currentRoomId).push({
+                system: true,
+                text: msg,
+                time: firebase.database.ServerValue.TIMESTAMP
+            });
+        }
+
+        function sendRoomChat() {
+            const input = document.getElementById('roomChatInput');
+            const text = input.value.trim();
+            if (!text || !currentRoomId) return;
+            db.ref('roomChats/' + currentRoomId).push({
+                name: myNickname,
+                text: text,
+                time: firebase.database.ServerValue.TIMESTAMP
+            });
+            input.value = '';
+        }
+
+        // ==========================================
+        // 4. 준비 완료 / 내보내기(강퇴) / 퇴장
+        // ==========================================
+        function toggleReady() {
+            if (!currentRoomData || currentRoomData.status === 'playing') return;
+            if (myRole === 'host') {
+                const nextReady = !currentRoomData.host.ready;
+                roomRef.child('host/ready').set(nextReady);
+            } else if (myRole === 'guest' && currentRoomData.guest) {
+                const nextReady = !currentRoomData.guest.ready;
+                roomRef.child('guest/ready').set(nextReady);
+            }
+        }
+
+        function kickGuest() {
+            if (myRole !== 'host' || !currentRoomData || !currentRoomData.guest) return;
+            if (currentRoomData.status === 'playing') {
+                alert('게임 진행 중에는 내보낼 수 없습니다.');
+                return;
+            }
+            const kickedName = currentRoomData.guest.name;
+            roomRef.update({
+                guest: null,
+                status: 'waiting',
+                'host/ready': false
+            });
+            pushRoomSystemChat(`방장이 ${kickedName}님을 내보냈습니다.`);
+        }
+
+        function leaveRoom() {
+            if (!currentRoomData) return;
+
+            // 요구사항: 준비 완료를 누르기 전(또는 대기 상태)에 퇴장 가능
+            const myPlayerObj = myRole === 'host' ? currentRoomData.host : currentRoomData.guest;
+            if (currentRoomData.status !== 'playing' && myPlayerObj && myPlayerObj.ready) {
+                alert('준비 완료 상태에서는 퇴장할 수 없습니다. 먼저 [준비 취소]를 눌러주세요.');
+                return;
+            }
+
+            if (currentRoomData.status === 'playing') {
+                if (!confirm('게임 도중 퇴장하면 기권패 처리됩니다. 나가시겠습니까?')) return;
+            }
+
+            if (myRole === 'host') {
+                roomRef.onDisconnect().cancel();
+                if (roomChatRef) roomChatRef.remove();
+                roomRef.remove();
+            } else {
+                roomRef.child('guest').onDisconnect().cancel();
+                pushRoomSystemChat(`${myNickname}님이 퇴장했습니다.`);
+                roomRef.update({
+                    guest: null,
+                    status: 'waiting',
+                    'host/ready': false,
+                    isPaused: false,
+                    moves: [],
+                    winner: 0
+                });
+            }
+            cleanupRoomAndReturn();
+        }
+
+        function cleanupRoomAndReturn() {
+            if (roomRef) roomRef.off();
+            if (roomChatRef) roomChatRef.off();
+            if (localTimerInterval) clearInterval(localTimerInterval);
+            roomRef = null;
+            roomChatRef = null;
+            currentRoomId = null;
+            currentRoomData = null;
+            myRole = null;
+            showScreen('lobbyScreen');
+        }
+
+        // ==========================================
+        // 5. 오목 게임 진행 (시작 / 착수 / 무르기 / 일시정지 / 종료)
+        // ==========================================
+        function startNewMatchInRoom() {
+            const now = Date.now();
+            roomRef.update({
+                status: 'playing',
+                turn: 1, // 흑돌(방장) 선공
+                turnStartTime: now,
+                remainingWhenPaused: 60,
+                isPaused: false,
+                pausedBy: "",
+                gameStartTime: now,
+                moves: [],
+                winner: 0,
+                winReason: "",
+                'host/undoLeft': 1,
+                'guest/undoLeft': 1
+            });
+            pushRoomSystemChat('양쪽 모두 준비 완료! 대국이 시작되었습니다.');
+        }
+
+        // 오목판 클릭 착수
+        canvas.addEventListener('click', e => {
+            if (!currentRoomData || currentRoomData.status !== 'playing' || currentRoomData.isPaused) return;
+
+            const myTurnNum = myRole === 'host' ? 1 : 2;
+            if (currentRoomData.turn !== myTurnNum) return; // 내 차례가 아님
+
+            const rect = canvas.getBoundingClientRect();
+            const col = Math.floor((e.clientX - rect.left) / cellSize);
+            const row = Math.floor((e.clientY - rect.top) / cellSize);
+
+            if (row < 0 || row >= BOARD_SIZE || col < 0 || col >= BOARD_SIZE) return;
+            if (localBoard[row][col] !== 0) return; // 이미 돌이 놓인 자리
+
+            const moves = currentRoomData.moves ? [...currentRoomData.moves] : [];
+            moves.push({ r: row, c: col, p: myTurnNum });
+
+            // 임시 보드에 반영 후 5목 승리 판정
+            localBoard[row][col] = myTurnNum;
+            const isWin = checkFiveInARow(row, col, myTurnNum);
+
+            if (isWin) {
+                finishGame(myTurnNum, '오목 완성', moves);
+            } else if (moves.length >= BOARD_SIZE * BOARD_SIZE) {
+                finishGame(3, '무승부', moves);
+            } else {
+                const nextTurn = myTurnNum === 1 ? 2 : 1;
+                roomRef.update({
+                    moves: moves,
+                    turn: nextTurn,
+                    turnStartTime: Date.now(),
+                    remainingWhenPaused: 60
+                });
+            }
+        });
+
+        // 무르기 쿠폰 1회 사용 (내가 방금 둔 수 물리기)
+        function useUndoCoupon() {
+            if (!currentRoomData || currentRoomData.status !== 'playing' || currentRoomData.isPaused) return;
+            const moves = currentRoomData.moves ? [...currentRoomData.moves] : [];
+            if (moves.length === 0) {
+                alert('무를 수 있는 돌이 없습니다.');
+                return;
+            }
+
+            const myTurnNum = myRole === 'host' ? 1 : 2;
+            const myPlayerObj = myRole === 'host' ? currentRoomData.host : currentRoomData.guest;
+
+            if (!myPlayerObj || myPlayerObj.undoLeft <= 0) {
+                alert('무르기 쿠폰을 이미 모두 사용했습니다.');
+                return;
+            }
+
+            const lastMove = moves[moves.length - 1];
+            if (lastMove.p !== myTurnNum) {
+                alert('무르기는 내가 방금 둔 직후(상대방이 두기 전)에만 사용할 수 있습니다!');
+                return;
+            }
+
+            moves.pop(); // 마지막 돌 제거
+            const undoPath = myRole === 'host' ? 'host/undoLeft' : 'guest/undoLeft';
+
+            roomRef.update({
+                moves: moves,
+                turn: myTurnNum, // 다시 내 턴으로
+                turnStartTime: Date.now(),
+                remainingWhenPaused: 60,
+                [undoPath]: 0
+            });
+
+            pushRoomSystemChat(`${myNickname}님이 [무르기 쿠폰]을 사용하여 수를 되돌렸습니다.`);
+        }
+
+        // 일시정지 토글 (흑/백 누구나 켜고 끌 수 있음)
+        function togglePauseGame() {
+            if (!currentRoomData || currentRoomData.status !== 'playing') return;
+
+            if (!currentRoomData.isPaused) {
+                // 일시정지 켜기: 남은 초 계산해서 저장
+                const elapsed = Math.floor((Date.now() - currentRoomData.turnStartTime) / 1000);
+                const rem = Math.max(1, (currentRoomData.remainingWhenPaused || 60) - elapsed);
+                roomRef.update({
+                    isPaused: true,
+                    pausedBy: myNickname,
+                    remainingWhenPaused: rem
+                });
+                pushRoomSystemChat(`⏸️ ${myNickname}님이 게임을 일시정지했습니다.`);
+            } else {
+                // 일시정지 끄기
+                roomRef.update({
+                    isPaused: false,
+                    pausedBy: "",
+                    turnStartTime: Date.now()
+                });
+                pushRoomSystemChat(`▶️ ${myNickname}님이 게임을 재개했습니다.`);
+            }
+        }
+
+        // 게임 종료 처리 및 전적/소요시간 저장
+        function finishGame(winnerNum, reason, finalMoves) {
+            if (!currentRoomData || currentRoomData.status !== 'playing') return;
+
+            const hostWins = (currentRoomData.host.wins || 0) + (winnerNum === 1 ? 1 : 0);
+            const guestWins = (currentRoomData.guest ? (currentRoomData.guest.wins || 0) : 0) + (winnerNum === 2 ? 1 : 0);
+
+            const updates = {
+                status: 'full', // 게임이 끝나면 다시 방 대기 상태(참여불가능, 준비 전)로 전환
+                winner: winnerNum,
+                winReason: reason,
+                isPaused: false,
+                'host/ready': false,
+                'guest/ready': false,
+                'host/wins': hostWins,
+                'guest/wins': guestWins
+            };
+            if (finalMoves) updates.moves = finalMoves;
+
+            roomRef.update(updates);
+
+            // 승패 이력과 소요 시간(초)을 전체 DB에 기록
+            const durationSec = Math.max(1, Math.floor((Date.now() - (currentRoomData.gameStartTime || Date.now())) / 1000));
+            if (winnerNum === 1 || winnerNum === 2) {
+                const winnerName = winnerNum === 1 ? currentRoomData.host.name : currentRoomData.guest.name;
+                const loserName = winnerNum === 1 ? currentRoomData.guest.name : currentRoomData.host.name;
+
+                db.ref('matchHistory').push({
+                    winner: winnerName,
+                    loser: loserName,
+                    reason: reason,
+                    durationSec: durationSec,
+                    timestamp: firebase.database.ServerValue.TIMESTAMP
+                });
+
+                pushRoomSystemChat(`🎉 [${winnerName}] 승리! (${reason}, 소요시간: ${formatDuration(durationSec)})`);
+            }
+        }
+
+        // 1분 카운트다운 타이머 루프
+        function tickRoomTimer() {
+            if (!currentRoomData || currentRoomData.status !== 'playing') {
+                document.getElementById('hostTimerDisplay').innerText = '01:00';
+                document.getElementById('guestTimerDisplay').innerText = '01:00';
+                return;
+            }
+
+            let remSec = currentRoomData.remainingWhenPaused || 60;
+            if (!currentRoomData.isPaused) {
+                const elapsed = Math.floor((Date.now() - currentRoomData.turnStartTime) / 1000);
+                remSec = Math.max(0, remSec - elapsed);
+            }
+
+            const formatted = `00:${String(remSec).padStart(2, '0')}`;
+            if (currentRoomData.turn === 1) {
+                document.getElementById('hostTimerDisplay').innerText = remSec === 60 ? '01:00' : formatted;
+                document.getElementById('guestTimerDisplay').innerText = '01:00';
+            } else {
+                document.getElementById('guestTimerDisplay').innerText = remSec === 60 ? '01:00' : formatted;
+                document.getElementById('hostTimerDisplay').innerText = '01:00';
+            }
+
+            // 시간 초과 시 방장 클라이언트가 판정하여 종료 처리
+            if (remSec <= 0 && !currentRoomData.isPaused && myRole === 'host') {
+                const timeoutWinner = currentRoomData.turn === 1 ? 2 : 1;
+                finishGame(timeoutWinner, '시간 초과', currentRoomData.moves || []);
+            }
+        }
+
+        // ==========================================
+        // 6. UI 및 오목판 렌더링
+        // ==========================================
+        function renderRoomState(data) {
+            // 상단 배지 및 제목
+            const badge = document.getElementById('roomStatusBadge');
+            if (data.status === 'playing') {
+                badge.className = 'badge badge-playing';
+                badge.innerText = '게임중';
+            } else if (data.guest) {
+                badge.className = 'badge badge-full';
+                badge.innerText = '참여불가능 (대기중)';
+            } else {
+                badge.className = 'badge badge-open';
+                badge.innerText = '참여가능';
+            }
+            document.getElementById('roomTitleText').innerText = `${data.host.name}님의 방`;
+
+            const hWins = data.host.wins || 0;
+            const gWins = data.guest ? (data.guest.wins || 0) : 0;
+            document.getElementById('roomScoreText').innerText = `흑 ${hWins}승 vs 백 ${gWins}승`;
+
+            // 흑돌(방장) 카드
+            document.getElementById('hostNameDisplay').innerText = data.host.name;
+            document.getElementById('hostUndoDisplay').innerText = `무르기 쿠폰: ${data.host.undoLeft ?? 1}개`;
+            const hostReadyTag = document.getElementById('hostReadyTag');
+            hostReadyTag.innerText = data.host.ready ? '준비 완료!' : '준비 대기';
+            hostReadyTag.className = 'ready-tag ' + (data.host.ready ? 'on' : '');
+
+            // 백돌(게스트) 카드
+            const guestReadyTag = document.getElementById('guestReadyTag');
+            if (data.guest) {
+                document.getElementById('guestNameDisplay').innerText = data.guest.name;
+                document.getElementById('guestUndoDisplay').innerText = `무르기 쿠폰: ${data.guest.undoLeft ?? 1}개`;
+                guestReadyTag.innerText = data.guest.ready ? '준비 완료!' : '준비 대기';
+                guestReadyTag.className = 'ready-tag ' + (data.guest.ready ? 'on' : '');
+            } else {
+                document.getElementById('guestNameDisplay').innerText = '상대 대기 중...';
+                document.getElementById('guestUndoDisplay').innerText = '무르기 쿠폰: 1개';
+                guestReadyTag.innerText = '입장 대기';
+                guestReadyTag.className = 'ready-tag';
+            }
+
+            // 턴 강조 표시
+            const cardHost = document.getElementById('cardHost');
+            const cardGuest = document.getElementById('cardGuest');
+            cardHost.className = 'player-card ' + (data.status === 'playing' && data.turn === 1 ? 'active-turn' : (data.host.ready ? 'ready' : ''));
+            cardGuest.className = 'player-card ' + (data.status === 'playing' && data.turn === 2 ? 'active-turn' : (data.guest && data.guest.ready ? 'ready' : ''));
+
+            // 중앙 컨트롤 버튼 노출 제어
+            const btnReady = document.getElementById('btnReady');
+            const btnKick = document.getElementById('btnKick');
+            const btnUndo = document.getElementById('btnUndo');
+            const btnPause = document.getElementById('btnPause');
+            const btnLeave = document.getElementById('btnLeave');
+
+            if (data.status === 'playing') {
+                btnReady.style.display = 'none';
+                btnKick.style.display = 'none';
+                btnUndo.style.display = 'inline-block';
+                btnPause.style.display = 'inline-block';
+                btnPause.innerText = data.isPaused ? '게임 재개' : '일시정지';
+
+                const myObj = myRole === 'host' ? data.host : data.guest;
+                const myTurnNum = myRole === 'host' ? 1 : 2;
+                const moves = data.moves || [];
+                const canUndoNow = myObj && myObj.undoLeft > 0 && moves.length > 0 && moves[moves.length - 1].p === myTurnNum && !data.isPaused;
+                btnUndo.disabled = !canUndoNow;
+                btnUndo.innerText = `무르기(${myObj ? myObj.undoLeft : 0})`;
+                btnLeave.disabled = false;
+            } else {
+                btnReady.style.display = 'inline-block';
+                const myObj = myRole === 'host' ? data.host : data.guest;
+                const amIReady = myObj && myObj.ready;
+                btnReady.innerText = amIReady ? '준비 취소' : '준비 완료';
+                btnReady.className = 'btn btn-sm ' + (amIReady ? 'btn-orange' : 'btn-green');
+
+                // 준비 완료 누르기 전에만 퇴장 활성화
+                btnLeave.disabled = !!amIReady;
+
+                // 방장이고 게스트가 있을 때만 내보내기(강퇴) 표시
+                btnKick.style.display = (myRole === 'host' && data.guest) ? 'inline-block' : 'none';
+                btnUndo.style.display = 'none';
+                btnPause.style.display = 'none';
+            }
+
+            // 오버레이 제어 (대기 중 / 일시정지 / 대국 종료 안내)
+            const overlay = document.getElementById('boardOverlay');
+            const ovTitle = document.getElementById('overlayTitle');
+            const ovDesc = document.getElementById('overlayDesc');
+            const ovBtn = document.getElementById('overlayActionBtn');
+
+            if (data.status === 'playing') {
+                if (data.isPaused) {
+                    overlay.classList.add('show');
+                    ovTitle.innerText = '⏸️ 게임 일시정지 중';
+                    ovDesc.innerText = `${data.pausedBy}님이 일시정지를 눌렀습니다. 누구든 해제할 수 있습니다.`;
+                    ovBtn.style.display = 'inline-block';
+                } else {
+                    overlay.classList.remove('show');
+                }
+            } else {
+                overlay.classList.add('show');
+                ovBtn.style.display = 'none';
+                if (data.winner === 1 || data.winner === 2) {
+                    const winName = data.winner === 1 ? data.host.name : (data.guest ? data.guest.name : '상대방');
+                    ovTitle.innerText = `🏆 ${winName} 승리! (${data.winReason})`;
+                    ovDesc.innerText = '한 판 더 하시려면 양쪽 모두 [준비 완료] 버튼을 눌러주세요!';
+                } else if (!data.guest) {
+                    ovTitle.innerText = '상대방 입장을 기다리는 중...';
+                    ovDesc.innerText = '대기실 방 리스트에서 다른 플레이어가 참여하면 준비할 수 있습니다.';
+                } else {
+                    ovTitle.innerText = '대국 준비 대기 중';
+                    ovDesc.innerText = '두 플레이어가 모두 [준비 완료]를 누르면 즉시 게임이 시작됩니다.';
+                }
+            }
+
+            // 보드 데이터 동기화 및 그리기
+            localBoard = Array(BOARD_SIZE).fill(null).map(() => Array(BOARD_SIZE).fill(0));
+            lastMovePos = null;
+            if (data.moves && Array.isArray(data.moves)) {
+                data.moves.forEach(m => {
+                    if (m && m.r !== undefined && m.c !== undefined) {
+                        localBoard[m.r][m.c] = m.p;
+                        lastMovePos = { r: m.r, c: m.c };
+                    }
+                });
+            }
             drawBoard();
         }
 
-        window.addEventListener('resize', resizeBoard);
-        resizeBoard();
+        function resizeCanvas() {
+            const maxW = Math.min(window.innerWidth - 44, 480);
+            boardPx = Math.max(280, maxW);
+            canvas.width = boardPx;
+            canvas.height = boardPx;
+            cellSize = boardPx / BOARD_SIZE;
+            drawBoard();
+        }
+        window.addEventListener('resize', resizeCanvas);
 
         function drawBoard() {
-            ctx.clearRect(0, 0, boardSizePx, boardSizePx);
+            ctx.clearRect(0, 0, boardPx, boardPx);
             ctx.strokeStyle = '#333';
             ctx.lineWidth = 1;
 
+            const offset = cellSize / 2;
             for (let i = 0; i < BOARD_SIZE; i++) {
-                let offset = cellSize / 2;
                 ctx.beginPath();
                 ctx.moveTo(offset, i * cellSize + offset);
-                ctx.lineTo(boardSizePx - offset, i * cellSize + offset);
+                ctx.lineTo(boardPx - offset, i * cellSize + offset);
                 ctx.stroke();
 
                 ctx.beginPath();
                 ctx.moveTo(i * cellSize + offset, offset);
-                ctx.lineTo(i * cellSize + offset, boardSizePx - offset);
+                ctx.lineTo(i * cellSize + offset, boardPx - offset);
                 ctx.stroke();
             }
 
-            const starPoints = [3, 7, 11];
-            starPoints.forEach(x => {
-                starPoints.forEach(y => {
+            // 화점 표시
+            [3, 7, 11].forEach(r => {
+                [3, 7, 11].forEach(c => {
                     ctx.beginPath();
-                    ctx.arc(x * cellSize + cellSize/2, y * cellSize + cellSize/2, 3.5, 0, Math.PI * 2);
-                    ctx.fillStyle = '#333';
+                    ctx.arc(c * cellSize + offset, r * cellSize + offset, 3, 0, Math.PI * 2);
+                    ctx.fillStyle = '#222';
                     ctx.fill();
                 });
             });
 
+            // 바둑돌 그리기
             for (let r = 0; r < BOARD_SIZE; r++) {
                 for (let c = 0; c < BOARD_SIZE; c++) {
-                    if (board[r][c] !== 0) {
-                        drawStone(r, c, board[r][c]);
+                    if (localBoard[r][c] !== 0) {
+                        drawStone(r, c, localBoard[r][c]);
                     }
                 }
+            }
+
+            // 마지막 둔 수 빨간 점 표시
+            if (lastMovePos) {
+                ctx.beginPath();
+                ctx.arc(lastMovePos.c * cellSize + offset, lastMovePos.r * cellSize + offset, 4, 0, Math.PI * 2);
+                ctx.fillStyle = '#e74c3c';
+                ctx.fill();
             }
         }
 
         function drawStone(row, col, player) {
-            let x = col * cellSize + cellSize / 2;
-            let y = row * cellSize + cellSize / 2;
-            let radius = cellSize * 0.43;
+            const x = col * cellSize + cellSize / 2;
+            const y = row * cellSize + cellSize / 2;
+            const radius = cellSize * 0.43;
 
             ctx.beginPath();
             ctx.arc(x, y, radius, 0, Math.PI * 2);
-
-            let gradient = ctx.createRadialGradient(x - radius/3, y - radius/3, radius/10, x, y, radius);
+            const grad = ctx.createRadialGradient(x - radius/3, y - radius/3, radius/8, x, y, radius);
             if (player === 1) {
-                gradient.addColorStop(0, '#555');
-                gradient.addColorStop(1, '#111');
+                grad.addColorStop(0, '#666');
+                grad.addColorStop(1, '#111');
             } else {
-                gradient.addColorStop(0, '#fff');
-                gradient.addColorStop(1, '#ccc');
+                grad.addColorStop(0, '#fff');
+                grad.addColorStop(1, '#cfd8dc');
             }
-
-            ctx.fillStyle = gradient;
-            ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
+            ctx.fillStyle = grad;
+            ctx.shadowColor = 'rgba(0,0,0,0.28)';
             ctx.shadowBlur = 4;
-            ctx.shadowOffsetX = 2;
+            ctx.shadowOffsetX = 1;
             ctx.shadowOffsetY = 2;
             ctx.fill();
             ctx.shadowBlur = 0;
@@ -377,210 +1019,30 @@
             ctx.shadowOffsetY = 0;
         }
 
-        canvas.addEventListener('click', (e) => {
-            if (isPaused || isGameOver) return;
-
-            const rect = canvas.getBoundingClientRect();
-            const x = e.clientX - rect.left;
-            const y = e.clientY - rect.top;
-
-            const col = Math.floor(x / cellSize);
-            const row = Math.floor(y / cellSize);
-
-            if (row >= 0 && row < BOARD_SIZE && col >= 0 && col < BOARD_SIZE) {
-                if (board[row][col] === 0) {
-                    placeStone(row, col);
-                }
-            }
-        });
-
-        function placeStone(row, col) {
-            board[row][col] = turn;
-            history.push({ row, col, player: turn });
-            drawBoard();
-
-            if (checkWin(row, col, turn)) {
-                endGame(turn);
-                return;
-            }
-
-            turn = turn === 1 ? 2 : 1;
-            updateUI();
-            resetTimer();
-        }
-
-        function checkWin(r, c, player) {
-            const directions = [
-                { dr: 0, dc: 1 },
-                { dr: 1, dc: 0 },
-                { dr: 1, dc: 1 },
-                { dr: 1, dc: -1 }
-            ];
-
-            for (let {dr, dc} of directions) {
-                let count = 1;
+        function checkFiveInARow(r, c, player) {
+            const dirs = [{dr:0, dc:1}, {dr:1, dc:0}, {dr:1, dc:1}, {dr:1, dc:-1}];
+            for (let {dr, dc} of dirs) {
+                let cnt = 1;
                 let i = 1;
-                while (r + dr * i >= 0 && r + dr * i < BOARD_SIZE && c + dc * i >= 0 && c + dc * i < BOARD_SIZE && board[r + dr * i][c + dc * i] === player) {
-                    count++;
-                    i++;
-                }
+                while (r+dr*i >= 0 && r+dr*i < BOARD_SIZE && c+dc*i >= 0 && c+dc*i < BOARD_SIZE && localBoard[r+dr*i][c+dc*i] === player) { cnt++; i++; }
                 i = 1;
-                while (r - dr * i >= 0 && r - dr * i < BOARD_SIZE && c - dc * i >= 0 && c - dc * i < BOARD_SIZE && board[r - dr * i][c - dc * i] === player) {
-                    count++;
-                    i++;
-                }
-                if (count >= 5) return true;
+                while (r-dr*i >= 0 && r-dr*i < BOARD_SIZE && c-dc*i >= 0 && c-dc*i < BOARD_SIZE && localBoard[r-dr*i][c-dc*i] === player) { cnt++; i++; }
+                if (cnt >= 5) return true;
             }
             return false;
         }
 
-        function undoMove() {
-            if (history.length === 0 || isPaused || isGameOver) return;
-
-            const lastMove = history[history.length - 1];
-            let targetPlayer = lastMove.player;
-
-            if (!players[targetPlayer].canUndo) return;
-
-            board[lastMove.row][lastMove.col] = 0;
-            history.pop();
-            players[targetPlayer].canUndo = false;
-
-            turn = targetPlayer;
-            drawBoard();
-            updateUI();
-            resetTimer();
+        // 유틸 함수
+        function formatDuration(sec) {
+            const m = String(Math.floor(sec / 60)).padStart(2, '0');
+            const s = String(sec % 60).padStart(2, '0');
+            return `${m}분 ${s}초`;
         }
 
-        function startTimer() {
-            clearInterval(timerInterval);
-            timeLeft = 60;
-            updateTimerDisplay();
-
-            timerInterval = setInterval(() => {
-                if (!isPaused && !isGameOver) {
-                    timeLeft--;
-                    updateTimerDisplay();
-
-                    if (timeLeft <= 0) {
-                        clearInterval(timerInterval);
-                        let winner = turn === 1 ? 2 : 1;
-                        endGame(winner, true);
-                    }
-                }
-            }, 1000);
+        function escapeHtml(str) {
+            if (!str) return '';
+            return String(str).replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s]));
         }
-
-        function resetTimer() {
-            startTimer();
-        }
-
-        function updateTimerDisplay() {
-            let m = String(Math.floor(timeLeft / 60)).padStart(2, '0');
-            let s = String(timeLeft % 60).padStart(2, '0');
-            if (turn === 1) {
-                document.getElementById('timer-black').innerText = `${m}:${s}`;
-                document.getElementById('timer-white').innerText = `01:00`;
-            } else {
-                document.getElementById('timer-white').innerText = `${m}:${s}`;
-                document.getElementById('timer-black').innerText = `01:00`;
-            }
-        }
-
-        function updateUI() {
-            const p1Box = document.getElementById('player1-box');
-            const p2Box = document.getElementById('player2-box');
-            const undoBtn = document.getElementById('btn-undo');
-
-            document.getElementById('p1-name').innerText = players[1].name;
-            document.getElementById('p2-name').innerText = players[2].name;
-
-            // 무르기 상태 텍스트 업데이트
-            const u1Status = document.getElementById('undo-status-1');
-            const u2Status = document.getElementById('undo-status-2');
-
-            u1Status.innerText = players[1].canUndo ? "무르기 (1/1)" : "무르기 (사용함)";
-            u1Status.className = `undo-status ${players[1].canUndo ? 'available' : ''}`;
-
-            u2Status.innerText = players[2].canUndo ? "무르기 (1/1)" : "무르기 (사용함)";
-            u2Status.className = `undo-status ${players[2].canUndo ? 'available' : ''}`;
-
-            if (turn === 1) {
-                p1Box.classList.add('active');
-                p2Box.classList.remove('active');
-            } else {
-                p2Box.classList.add('active');
-                p1Box.classList.remove('active');
-            }
-
-            undoBtn.disabled = !players[turn].canUndo;
-        }
-
-        // 닉네임 설정 모달 관련
-        function openNicknameModal(playerNum) {
-            editingPlayer = playerNum;
-            document.getElementById('nicknameInput').value = players[playerNum].name;
-            document.getElementById('nicknameModal').style.display = 'flex';
-            document.getElementById('nicknameInput').focus();
-        }
-
-        function saveNickname() {
-            const val = document.getElementById('nicknameInput').value.trim();
-            if (val) {
-                players[editingPlayer].name = val;
-                updateUI();
-                updateScoreDisplay();
-            }
-            document.getElementById('nicknameModal').style.display = 'none';
-        }
-
-        function togglePause() {
-            if (isGameOver) return;
-            isPaused = !isPaused;
-            document.getElementById('pauseModal').style.display = isPaused ? 'flex' : 'none';
-        }
-
-        function endGame(winner, byTimeout = false) {
-            isGameOver = true;
-            clearInterval(timerInterval);
-            stats[winner]++;
-            updateScoreDisplay();
-
-            let winnerName = players[winner].name;
-            let text = byTimeout ? `${players[turn].name} 시간 초과!\n🏆 ${winnerName} 승리!` : `🏆 ${winnerName} 승리!`;
-            
-            document.getElementById('winnerAnnouncement').innerText = text;
-            document.getElementById('gameOverModal').style.display = 'flex';
-        }
-
-        function updateScoreDisplay() {
-            document.getElementById('score-display').innerText = 
-                `전적: ${players[1].name} (${stats[1]}승) vs ${players[2].name} (${stats[2]}승)`;
-        }
-
-        function resetScore() {
-            stats = { 1: 0, 2: 0 };
-            updateScoreDisplay();
-        }
-
-        function resetGame() {
-            board = Array(BOARD_SIZE).fill(null).map(() => Array(BOARD_SIZE).fill(0));
-            turn = 1;
-            history = [];
-            players[1].canUndo = true;
-            players[2].canUndo = true;
-            isGameOver = false;
-            isPaused = false;
-            document.getElementById('gameOverModal').style.display = 'none';
-            updateUI();
-            drawBoard();
-            startTimer();
-        }
-
-        // 초기 실행
-        updateScoreDisplay();
-        updateUI();
-        startTimer();
     </script>
 </body>
 </html>
