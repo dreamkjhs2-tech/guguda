@@ -1219,4 +1219,1108 @@
             }
             for (let q = 0; q <= 4; q++) obj[`${q},-4`] = 2;
             for (let q = -1; q <= 4; q++) obj[`${q},-3`] = 2;
-            for (let q = 0; q <= 2
+            for (let q = 0; q <= 2; q++) obj[`${q},-2`] = 2;
+
+            for (let q = -4; q <= 0; q++) obj[`${q},4`] = 1;
+            for (let q = -4; q <= 1; q++) obj[`${q},3`] = 1;
+            for (let q = -2; q <= 0; q++) obj[`${q},2`] = 1;
+            return obj;
+        }
+
+        function parseKey(k) { const [q, r] = k.split(',').map(Number); return { q, r }; }
+        function isValidCell(q, r) { return Math.abs(q) <= 4 && Math.abs(r) <= 4 && Math.abs(q + r) <= 4; }
+
+        function isValidSelection(sel) {
+            if (sel.length <= 1) return true;
+            if (sel.length > 3) return false;
+            if (sel.length === 2) {
+                const dq = sel[1].q - sel[0].q; const dr = sel[1].r - sel[0].r;
+                return A_DIRECTIONS.some(d => d.q === dq && d.r === dr);
+            }
+            if (sel.length === 3) {
+                const sorted = [...sel].sort((a, b) => (a.q - b.q) || (a.r - b.r));
+                const dq1 = sorted[1].q - sorted[0].q; const dr1 = sorted[1].r - sorted[0].r;
+                const dq2 = sorted[2].q - sorted[1].q; const dr2 = sorted[2].r - sorted[1].r;
+                return dq1 === dq2 && dr1 === dr2 && A_DIRECTIONS.some(d => d.q === dq1 && d.r === dr1);
+            }
+            return false;
+        }
+
+        function calculateAbaloneMoves(boardObj, myTurnNum) {
+            av_validMoves = [];
+            if (av_selected.length === 0) return;
+
+            const sorted = [...av_selected].sort((a, b) => (a.q - b.q) || (a.r - b.r));
+            let lineDir = null;
+            if (sorted.length >= 2) {
+                lineDir = { q: sorted[1].q - sorted[0].q, r: sorted[1].r - sorted[0].r };
+            }
+
+            for (const dir of A_DIRECTIONS) {
+                const isInline = !lineDir || ((dir.q === lineDir.q && dir.r === lineDir.r) || (dir.q === -lineDir.q && dir.r === -lineDir.r));
+
+                if (isInline) {
+                    const head = av_selected.find(s => !av_selected.some(o => o.q === s.q + dir.q && o.r === s.r + dir.r));
+                    const nextQ = head.q + dir.q; const nextR = head.r + dir.r;
+                    if (!isValidCell(nextQ, nextR)) continue;
+
+                    const nextVal = boardObj[`${nextQ},${nextR}`];
+
+                    if (nextVal === 0) {
+                        av_validMoves.push({ dir, targetQ: nextQ, targetR: nextR, type: 'inline' });
+                    } else if (nextVal !== myTurnNum && av_selected.length >= 2) {
+                        let oppCount = 0; let checkQ = nextQ; let checkR = nextR; let canPush = false;
+                        while (isValidCell(checkQ, checkR)) {
+                            const val = boardObj[`${checkQ},${checkR}`];
+                            if (val === 0) { canPush = true; break; }
+                            else if (val === myTurnNum) { canPush = false; break; }
+                            else {
+                                oppCount++;
+                                if (oppCount >= av_selected.length) { canPush = false; break; }
+                            }
+                            checkQ += dir.q; checkR += dir.r;
+                        }
+                        if (!isValidCell(checkQ, checkR) && oppCount < av_selected.length) canPush = true;
+                        if (canPush && oppCount > 0 && oppCount < av_selected.length) {
+                            av_validMoves.push({ dir, targetQ: nextQ, targetR: nextR, type: 'push', pushCount: oppCount });
+                        }
+                    }
+                } else {
+                    const allEmpty = av_selected.every(s => {
+                        const nq = s.q + dir.q; const nr = s.r + dir.r;
+                        return isValidCell(nq, nr) && boardObj[`${nq},${nr}`] === 0;
+                    });
+                    if (allEmpty) {
+                        av_selected.forEach(s => {
+                            av_validMoves.push({ dir, targetQ: s.q + dir.q, targetR: s.r + dir.r, type: 'broadside' });
+                        });
+                    }
+                }
+            }
+        }
+
+        function handleAbaloneClick(e) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width; const scaleY = canvas.height / rect.height;
+            const clickX = (e.clientX - rect.left) * scaleX; const clickY = (e.clientY - rect.top) * scaleY;
+            const centerX = canvas.width / 2; const centerY = canvas.height / 2;
+
+            let clickedCell = null;
+            const boardObj = currentRoomData.boardState || {};
+            for (const k of Object.keys(boardObj)) {
+                const { q, r } = parseKey(k);
+                const x = centerX + HEX_RADIUS * Math.sqrt(3) * (q + r / 2);
+                const y = centerY + HEX_RADIUS * (3 / 2) * r;
+                if (Math.hypot(clickX - x, clickY - y) <= MARBLE_RADIUS + 3) {
+                    clickedCell = { q, r }; break;
+                }
+            }
+
+            if (!clickedCell) { av_selected = []; av_validMoves = []; drawAbaloneBoard(boardObj, currentRoomData.lastMoveInfo); return; }
+
+            const move = av_validMoves.find(m => m.targetQ === clickedCell.q && m.targetR === clickedCell.r);
+            if (move) {
+                executeAbaloneMove(move);
+                return;
+            }
+
+            const myTurnNum = myRole === 'host' ? 1 : 2;
+            const cellVal = boardObj[`${clickedCell.q},${clickedCell.r}`];
+            if (cellVal === myTurnNum) {
+                const idx = av_selected.findIndex(s => s.q === clickedCell.q && s.r === clickedCell.r);
+                if (idx >= 0) {
+                    const nextSel = av_selected.filter((_, i) => i !== idx);
+                    av_selected = isValidSelection(nextSel) ? nextSel : [clickedCell];
+                } else {
+                    const nextSel = [...av_selected, clickedCell];
+                    av_selected = isValidSelection(nextSel) ? nextSel : [clickedCell];
+                }
+                calculateAbaloneMoves(boardObj, myTurnNum);
+                drawAbaloneBoard(boardObj, currentRoomData.lastMoveInfo);
+            } else {
+                av_selected = []; av_validMoves = []; drawAbaloneBoard(boardObj, currentRoomData.lastMoveInfo);
+            }
+        }
+
+        function executeAbaloneMove(move) {
+            const prevBoard = { ...currentRoomData.boardState };
+            const boardObj = { ...currentRoomData.boardState };
+            const { dir, type } = move;
+            const myTurnNum = myRole === 'host' ? 1 : 2;
+            const opponent = myTurnNum === 1 ? 2 : 1;
+            let hScore = currentRoomData.host.score || 0;
+            let gScore = currentRoomData.guest.score || 0;
+
+            const fromCells = av_selected.map(s => ({ q: s.q, r: s.r }));
+            const toCells = av_selected.map(s => ({ q: s.q + dir.q, r: s.r + dir.r }));
+
+            if (type === 'broadside') {
+                av_selected.forEach(s => boardObj[`${s.q},${s.r}`] = 0);
+                av_selected.forEach(s => boardObj[`${s.q + dir.q},${s.r + dir.r}`] = myTurnNum);
+            } else {
+                const head = av_selected.find(s => !av_selected.some(o => o.q === s.q + dir.q && o.r === s.r + dir.r));
+                const tail = av_selected.find(s => !av_selected.some(o => o.q === s.q - dir.q && o.r === s.r - dir.r));
+
+                if (type === 'push') {
+                    for (let k = 1; k <= move.pushCount; k++) {
+                        const pq = head.q + dir.q * k;
+                        const pr = head.r + dir.r * k;
+                        fromCells.push({ q: pq, r: pr });
+                        if (isValidCell(pq + dir.q, pr + dir.r)) {
+                            toCells.push({ q: pq + dir.q, r: pr + dir.r });
+                        }
+                    }
+
+                    let endQ = head.q + dir.q * (move.pushCount + 1);
+                    let endR = head.r + dir.r * (move.pushCount + 1);
+                    if (isValidCell(endQ, endR)) {
+                        boardObj[`${endQ},${endR}`] = opponent;
+                    } else {
+                        if (myTurnNum === 1) hScore++; else gScore++;
+                    }
+                }
+                boardObj[`${head.q + dir.q},${head.r + dir.r}`] = myTurnNum;
+                boardObj[`${tail.q},${tail.r}`] = 0;
+            }
+
+            const moveTrace = {
+                fromCells: fromCells,
+                toCells: toCells,
+                dir: dir,
+                timestamp: Date.now()
+            };
+
+            const prevSnapshot = {
+                mover: myTurnNum,
+                boardState: prevBoard,
+                hostScore: currentRoomData.host.score || 0,
+                guestScore: currentRoomData.guest.score || 0
+            };
+
+            av_selected = []; av_validMoves = [];
+
+            if (hScore >= 6) {
+                finishGame(1, '상대 구슬 6개 밀어냄', { boardState: boardObj, 'host/score': hScore, 'guest/score': gScore, lastMoveInfo: moveTrace });
+            } else if (gScore >= 6) {
+                finishGame(2, '상대 구슬 6개 밀어냄', { boardState: boardObj, 'host/score': hScore, 'guest/score': gScore, lastMoveInfo: moveTrace });
+            } else {
+                roomRef.update({
+                    boardState: boardObj,
+                    turn: opponent,
+                    turnStartTime: Date.now(),
+                    remainingWhenPaused: 60,
+                    'host/score': hScore,
+                    'guest/score': gScore,
+                    lastMoveInfo: moveTrace,
+                    prevSnapshot: prevSnapshot
+                });
+            }
+        }
+
+        // ==========================================
+        // [게임 3] 장기 알까기 로직 (온라인 물리 동기화 + 참여자 180도 회전)
+        // ==========================================
+        function isJanggiFlipped() {
+            return currentGameId === 'janggi' && myRole === 'guest';
+        }
+
+        // 기준 좌표 -> 화면 표시 좌표 (참여자는 180도 회전)
+        function jkToScreen(x, y) {
+            if (isJanggiFlipped()) {
+                return { x: JK_BOARD_W - x, y: JK_BOARD_H - y };
+            }
+            return { x, y };
+        }
+
+        // 화면 터치 좌표 -> 기준 좌표 (참여자는 180도 역변환)
+        function jkToWorld(sx, sy) {
+            if (isJanggiFlipped()) {
+                return { x: JK_BOARD_W - sx, y: JK_BOARD_H - sy };
+            }
+            return { x: sx, y: sy };
+        }
+
+        function jkGetGridPos(col, row) {
+            const marginX = 45;
+            const marginY = 45;
+            const stepX = (JK_BOARD_W - marginX * 2) / 8;
+            const stepY = (JK_BOARD_H - marginY * 2) / 9;
+            return {
+                x: marginX + col * stepX,
+                y: marginY + row * stepY
+            };
+        }
+
+        function getDefaultJanggiBoard() {
+            const list = [];
+            const pushPiece = (col, row, team, typeKey, subName = '') => {
+                const pos = jkGetGridPos(col, row);
+                const spec = JK_PIECE_TYPES[typeKey];
+                const label = (typeKey === 'KING' || typeKey === 'PAWN') ? spec[team] : spec[team][subName];
+                list.push({ x: pos.x, y: pos.y, team, typeKey, label, out: false });
+            };
+
+            // 한(漢) - 기준 좌표 상단 (guest = 2, 참여자 화면에서는 180도 회전되어 하단 표시)
+            [
+                { col: 0, type: 'BIG', sub: '차' },
+                { col: 1, type: 'MID', sub: '상' },
+                { col: 2, type: 'MID', sub: '마' },
+                { col: 6, type: 'MID', sub: '상' },
+                { col: 7, type: 'MID', sub: '마' },
+                { col: 8, type: 'BIG', sub: '차' }
+            ].forEach(p => pushPiece(p.col, 0, 'han', p.type, p.sub));
+            pushPiece(4, 1, 'han', 'KING');
+            [1, 7].forEach(c => pushPiece(c, 2, 'han', 'BIG', '포'));
+            [0, 2, 4, 6, 8].forEach(c => pushPiece(c, 3, 'han', 'PAWN'));
+
+            // 초(楚) - 기준 좌표 하단 (host = 1)
+            [
+                { col: 0, type: 'BIG', sub: '차' },
+                { col: 1, type: 'MID', sub: '마' },
+                { col: 2, type: 'MID', sub: '상' },
+                { col: 6, type: 'MID', sub: '마' },
+                { col: 7, type: 'MID', sub: '상' },
+                { col: 8, type: 'BIG', sub: '차' }
+            ].forEach(p => pushPiece(p.col, 9, 'cho', p.type, p.sub));
+            pushPiece(4, 8, 'cho', 'KING');
+            [1, 7].forEach(c => pushPiece(c, 7, 'cho', 'BIG', '포'));
+            [0, 2, 4, 6, 8].forEach(c => pushPiece(c, 6, 'cho', 'PAWN'));
+
+            return list;
+        }
+
+        function serializeJanggiPieces(piecesArr) {
+            return piecesArr.map(p => ({
+                x: Math.round(p.x * 1000) / 1000,
+                y: Math.round(p.y * 1000) / 1000,
+                team: p.team,
+                typeKey: p.typeKey,
+                label: p.label,
+                out: !!p.out
+            }));
+        }
+
+        function deserializeJanggiPieces(rawBoard) {
+            if (!rawBoard) return [];
+            const arr = Array.isArray(rawBoard) ? rawBoard : Object.values(rawBoard);
+            return arr.map(item => {
+                const spec = JK_PIECE_TYPES[item.typeKey];
+                return {
+                    x: item.x,
+                    y: item.y,
+                    vx: 0,
+                    vy: 0,
+                    team: item.team,
+                    typeKey: item.typeKey,
+                    isKing: item.typeKey === 'KING',
+                    radius: spec.radius,
+                    mass: spec.mass,
+                    maxSpeed: spec.maxSpeed,
+                    label: item.label,
+                    out: !!item.out
+                };
+            });
+        }
+
+        function syncJanggiFromRoomData(data) {
+            if (!data) return;
+            const myTurnNum = myRole === 'host' ? 1 : 2;
+
+            if (data.status !== 'playing') {
+                jk_isMoving = false;
+                jk_isMyShot = false;
+                jk_selectedPiece = null;
+                jk_lastProcessedShotId = 0;
+                if (data.boardState) {
+                    jk_pieces = deserializeJanggiPieces(data.boardState);
+                }
+                return;
+            }
+
+            if (data.activeShot && data.activeShot.shotId && data.activeShot.shotId !== jk_lastProcessedShotId) {
+                jk_lastProcessedShotId = data.activeShot.shotId;
+                if (data.activeShot.mover !== myTurnNum) {
+                    jk_pieces = deserializeJanggiPieces(data.activeShot.startPieces);
+                    const target = jk_pieces[data.activeShot.pieceIdx];
+                    if (target && !target.out) {
+                        target.vx = data.activeShot.vx;
+                        target.vy = data.activeShot.vy;
+                        jk_isMoving = true;
+                        jk_isMyShot = false;
+                        jk_selectedPiece = null;
+                    }
+                    return;
+                }
+            }
+
+            if (!jk_isMoving && data.boardState) {
+                jk_pieces = deserializeJanggiPieces(data.boardState);
+            }
+        }
+
+        function getJanggiPointerPos(e) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = JK_BOARD_W / rect.width;
+            const scaleY = JK_BOARD_H / rect.height;
+            const sx = (e.clientX - rect.left) * scaleX;
+            const sy = (e.clientY - rect.top) * scaleY;
+            return jkToWorld(sx, sy);
+        }
+
+        function handleJanggiStart(e) {
+            if (jk_isMoving || (currentRoomData && currentRoomData.activeShot)) return;
+            const myTeam = myRole === 'host' ? 'cho' : 'han';
+            const pos = getJanggiPointerPos(e);
+
+            for (const p of jk_pieces) {
+                if (!p.out && p.team === myTeam) {
+                    if (Math.hypot(p.x - pos.x, p.y - pos.y) <= p.radius + 8) {
+                        jk_selectedPiece = p;
+                        jk_dragCurrent = { x: pos.x, y: pos.y };
+                        break;
+                    }
+                }
+            }
+        }
+
+        function handleJanggiMove(e) {
+            if (!jk_selectedPiece) return;
+            jk_dragCurrent = getJanggiPointerPos(e);
+        }
+
+        function handleJanggiEnd(e) {
+            if (!jk_selectedPiece) return;
+
+            const dx = jk_selectedPiece.x - jk_dragCurrent.x;
+            const dy = jk_selectedPiece.y - jk_dragCurrent.y;
+            const dist = Math.hypot(dx, dy);
+
+            if (dist > 6 && currentRoomData && currentRoomData.status === 'playing' && !currentRoomData.isPaused) {
+                const pieceIdx = jk_pieces.indexOf(jk_selectedPiece);
+                const myTurnNum = myRole === 'host' ? 1 : 2;
+                const clampedDist = Math.min(dist, JK_MAX_PULL);
+                const powerRatio = clampedDist / JK_MAX_PULL;
+                const speed = powerRatio * jk_selectedPiece.maxSpeed;
+                const vx = (dx / dist) * speed;
+                const vy = (dy / dist) * speed;
+
+                const startSnapshot = serializeJanggiPieces(jk_pieces);
+                const shotId = Date.now();
+
+                jk_lastProcessedShotId = shotId;
+                jk_pendingPrevSnapshot = {
+                    mover: myTurnNum,
+                    boardState: startSnapshot
+                };
+
+                jk_selectedPiece.vx = vx;
+                jk_selectedPiece.vy = vy;
+                jk_isMoving = true;
+                jk_isMyShot = true;
+
+                roomRef.child('activeShot').set({
+                    shotId: shotId,
+                    mover: myTurnNum,
+                    pieceIdx: pieceIdx,
+                    vx: vx,
+                    vy: vy,
+                    startPieces: startSnapshot
+                });
+            }
+
+            jk_selectedPiece = null;
+        }
+
+        function stepJanggiPhysics() {
+            let anyMoving = false;
+
+            for (const p of jk_pieces) {
+                if (p.out) continue;
+                p.x += p.vx;
+                p.y += p.vy;
+                p.vx *= JK_FRICTION;
+                p.vy *= JK_FRICTION;
+
+                if (Math.hypot(p.vx, p.vy) < 0.15) {
+                    p.vx = 0;
+                    p.vy = 0;
+                }
+
+                if (p.x < 0 || p.x > JK_BOARD_W || p.y < 0 || p.y > JK_BOARD_H) {
+                    p.out = true;
+                    p.vx = 0;
+                    p.vy = 0;
+                }
+
+                if (p.vx !== 0 || p.vy !== 0) {
+                    anyMoving = true;
+                }
+            }
+
+            for (let i = 0; i < jk_pieces.length; i++) {
+                for (let j = i + 1; j < jk_pieces.length; j++) {
+                    const p1 = jk_pieces[i];
+                    const p2 = jk_pieces[j];
+                    if (p1.out || p2.out) continue;
+
+                    const dx = p2.x - p1.x;
+                    const dy = p2.y - p1.y;
+                    const dist = Math.hypot(dx, dy);
+                    const minDist = p1.radius + p2.radius;
+
+                    if (dist < minDist && dist > 0) {
+                        const nx = dx / dist;
+                        const ny = dy / dist;
+                        const overlap = minDist - dist;
+                        const totalMass = p1.mass + p2.mass;
+
+                        p1.x -= nx * overlap * (p2.mass / totalMass);
+                        p1.y -= ny * overlap * (p2.mass / totalMass);
+                        p2.x += nx * overlap * (p1.mass / totalMass);
+                        p2.y += ny * overlap * (p1.mass / totalMass);
+
+                        const rvx = p2.vx - p1.vx;
+                        const rvy = p2.vy - p1.vy;
+                        const velAlongNormal = rvx * nx + rvy * ny;
+
+                        if (velAlongNormal > 0) continue;
+
+                        const restitution = 0.75;
+                        let impulse = -(1 + restitution) * velAlongNormal;
+                        impulse /= (1 / p1.mass + 1 / p2.mass);
+
+                        const impulseX = impulse * nx;
+                        const impulseY = impulse * ny;
+
+                        p1.vx -= (1 / p1.mass) * impulseX;
+                        p1.vy -= (1 / p1.mass) * impulseY;
+                        p2.vx += (1 / p2.mass) * impulseX;
+                        p2.vy += (1 / p2.mass) * impulseY;
+                    }
+                }
+            }
+
+            return anyMoving;
+        }
+
+        function onJanggiShotStopped() {
+            const wasMyShot = jk_isMyShot;
+            jk_isMoving = false;
+            jk_isMyShot = false;
+
+            if (!currentRoomData || currentRoomData.status !== 'playing') return;
+
+            if (wasMyShot) {
+                const finalBoard = serializeJanggiPieces(jk_pieces);
+                const choKing = jk_pieces.find(p => p.team === 'cho' && p.isKing);
+                const hanKing = jk_pieces.find(p => p.team === 'han' && p.isKing);
+
+                if (choKing.out && hanKing.out) {
+                    finishGame(3, '양쪽 왕 동반 아웃', { boardState: finalBoard, activeShot: null, prevSnapshot: null });
+                } else if (hanKing.out) {
+                    finishGame(1, '漢(한) 왕 아웃', { boardState: finalBoard, activeShot: null, prevSnapshot: null });
+                } else if (choKing.out) {
+                    finishGame(2, '楚(초) 왕 아웃', { boardState: finalBoard, activeShot: null, prevSnapshot: null });
+                } else {
+                    const myTurnNum = myRole === 'host' ? 1 : 2;
+                    const nextTurn = myTurnNum === 1 ? 2 : 1;
+                    roomRef.update({
+                        boardState: finalBoard,
+                        activeShot: null,
+                        prevSnapshot: jk_pendingPrevSnapshot,
+                        turn: nextTurn,
+                        turnStartTime: Date.now(),
+                        remainingWhenPaused: 60
+                    });
+                }
+                jk_pendingPrevSnapshot = null;
+            } else {
+                if (!currentRoomData.activeShot && currentRoomData.boardState) {
+                    jk_pieces = deserializeJanggiPieces(currentRoomData.boardState);
+                }
+            }
+        }
+
+        function startJanggiLoop() {
+            if (jk_animFrame) cancelAnimationFrame(jk_animFrame);
+            jk_lastFrameTime = performance.now();
+            jk_accumulator = 0;
+
+            function frame(now) {
+                if (currentGameId !== 'janggi' || !currentRoomId) return;
+
+                const delta = Math.min(now - jk_lastFrameTime, 100);
+                jk_lastFrameTime = now;
+
+                const paused = currentRoomData && currentRoomData.isPaused;
+                if (jk_isMoving && !paused) {
+                    jk_accumulator += delta;
+                    let steps = 0;
+                    while (jk_accumulator >= JK_STEP_MS && steps < 5 && jk_isMoving) {
+                        const stillMoving = stepJanggiPhysics();
+                        jk_accumulator -= JK_STEP_MS;
+                        steps++;
+                        if (!stillMoving) {
+                            jk_accumulator = 0;
+                            onJanggiShotStopped();
+                            break;
+                        }
+                    }
+                } else {
+                    jk_accumulator = 0;
+                }
+
+                drawJanggiBoard();
+                jk_animFrame = requestAnimationFrame(frame);
+            }
+
+            jk_animFrame = requestAnimationFrame(frame);
+        }
+
+        function drawJanggiBoard() {
+            ctx.clearRect(0, 0, JK_BOARD_W, JK_BOARD_H);
+            ctx.fillStyle = '#d4a359';
+            ctx.fillRect(0, 0, JK_BOARD_W, JK_BOARD_H);
+
+            ctx.strokeStyle = '#3d2b1f';
+            ctx.lineWidth = 1.5;
+
+            for (let r = 0; r < 10; r++) {
+                const start = jkGetGridPos(0, r);
+                const end = jkGetGridPos(8, r);
+                ctx.beginPath();
+                ctx.moveTo(start.x, start.y);
+                ctx.lineTo(end.x, end.y);
+                ctx.stroke();
+            }
+
+            for (let c = 0; c < 9; c++) {
+                const start = jkGetGridPos(c, 0);
+                const end = jkGetGridPos(c, 9);
+                ctx.beginPath();
+                ctx.moveTo(start.x, start.y);
+                ctx.lineTo(end.x, end.y);
+                ctx.stroke();
+            }
+
+            const drawDiag = (c1, r1, c2, r2) => {
+                const p1 = jkGetGridPos(c1, r1);
+                const p2 = jkGetGridPos(c2, r2);
+                ctx.beginPath();
+                ctx.moveTo(p1.x, p1.y);
+                ctx.lineTo(p2.x, p2.y);
+                ctx.stroke();
+            };
+            drawDiag(3, 0, 5, 2);
+            drawDiag(5, 0, 3, 2);
+            drawDiag(3, 7, 5, 9);
+            drawDiag(5, 7, 3, 9);
+
+            for (const p of jk_pieces) {
+                drawJanggiPiece(p);
+            }
+
+            drawJanggiAimGuide();
+        }
+
+        function drawJanggiOctagon(r, fillStyle, strokeStyle, lineWidth = 2) {
+            const sides = 8;
+            const offset = Math.PI / 8;
+            ctx.beginPath();
+            for (let i = 0; i < sides; i++) {
+                const angle = offset + (i * 2 * Math.PI) / sides;
+                const px = r * Math.cos(angle);
+                const py = r * Math.sin(angle);
+                if (i === 0) ctx.moveTo(px, py);
+                else ctx.lineTo(px, py);
+            }
+            ctx.closePath();
+            if (fillStyle) {
+                ctx.fillStyle = fillStyle;
+                ctx.fill();
+            }
+            if (strokeStyle) {
+                ctx.strokeStyle = strokeStyle;
+                ctx.lineWidth = lineWidth;
+                ctx.stroke();
+            }
+        }
+
+        function drawJanggiPiece(p) {
+            if (p.out) return;
+            const sp = jkToScreen(p.x, p.y);
+            ctx.save();
+            ctx.translate(sp.x, sp.y);
+
+            ctx.shadowColor = 'rgba(0, 0, 0, 0.45)';
+            ctx.shadowBlur = 6;
+            ctx.shadowOffsetX = 3;
+            ctx.shadowOffsetY = 4;
+
+            drawJanggiOctagon(p.radius, '#f7e7ce', '#b58952');
+
+            ctx.shadowColor = 'transparent';
+            drawJanggiOctagon(p.radius - 3.5, null, p.team === 'cho' ? '#1b7a3d' : '#c0392b', 1.2);
+
+            ctx.fillStyle = p.team === 'cho' ? '#0f5c2b' : '#b31b1b';
+            ctx.font = `bold ${Math.floor(p.radius * 1.05)}px "Batang", "궁서", serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(p.label, 0, 1.5);
+
+            ctx.restore();
+        }
+
+        function drawJanggiAimGuide() {
+            if (!jk_selectedPiece) return;
+
+            const sp = jkToScreen(jk_selectedPiece.x, jk_selectedPiece.y);
+            const sd = jkToScreen(jk_dragCurrent.x, jk_dragCurrent.y);
+
+            let dx = sp.x - sd.x;
+            let dy = sp.y - sd.y;
+            let dist = Math.hypot(dx, dy);
+
+            if (dist < 6) return;
+
+            if (dist > JK_MAX_PULL) {
+                dx = (dx / dist) * JK_MAX_PULL;
+                dy = (dy / dist) * JK_MAX_PULL;
+                dist = JK_MAX_PULL;
+            }
+
+            const powerRatio = dist / JK_MAX_PULL;
+            const dirX = dx / dist;
+            const dirY = dy / dist;
+
+            const minCircleR = jk_selectedPiece.radius + 4;
+            const maxCircleR = jk_selectedPiece.radius + 34;
+            const dynamicCircleR = minCircleR + (maxCircleR - minCircleR) * powerRatio;
+
+            const minArrowLen = 8;
+            const maxArrowLen = 36;
+            const dynamicArrowLen = minArrowLen + (maxArrowLen - minArrowLen) * powerRatio;
+
+            const r = 255;
+            const g = Math.floor(215 * (1 - powerRatio));
+            const b = 35;
+            const ringColor = `rgb(${r}, ${g}, ${b})`;
+
+            ctx.save();
+
+            ctx.beginPath();
+            ctx.arc(sp.x, sp.y, dynamicCircleR, 0, Math.PI * 2);
+            ctx.strokeStyle = ringColor;
+            ctx.lineWidth = 3.5;
+            ctx.stroke();
+
+            const arrowStart = dynamicCircleR + 3;
+            const startX = sp.x + dirX * arrowStart;
+            const startY = sp.y + dirY * arrowStart;
+            const tipX = sp.x + dirX * (arrowStart + dynamicArrowLen);
+            const tipY = sp.y + dirY * (arrowStart + dynamicArrowLen);
+
+            ctx.beginPath();
+            ctx.moveTo(startX, startY);
+            ctx.lineTo(tipX, tipY);
+            ctx.strokeStyle = ringColor;
+            ctx.lineWidth = 3;
+            ctx.lineCap = 'round';
+            ctx.stroke();
+
+            const headLen = 5 + 4 * powerRatio;
+            const angle = Math.atan2(dirY, dirX);
+            ctx.beginPath();
+            ctx.moveTo(tipX, tipY);
+            ctx.lineTo(tipX - headLen * Math.cos(angle - Math.PI / 6), tipY - headLen * Math.sin(angle - Math.PI / 6));
+            ctx.moveTo(tipX, tipY);
+            ctx.lineTo(tipX - headLen * Math.cos(angle + Math.PI / 6), tipY - headLen * Math.sin(angle + Math.PI / 6));
+            ctx.stroke();
+
+            ctx.fillStyle = '#fff';
+            ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+            ctx.lineWidth = 3;
+            ctx.font = 'bold 12px sans-serif';
+            ctx.textAlign = 'center';
+            const pctText = `${Math.round(powerRatio * 100)}%`;
+            ctx.strokeText(pctText, sp.x, sp.y - dynamicCircleR - 7);
+            ctx.fillText(pctText, sp.x, sp.y - dynamicCircleR - 7);
+
+            ctx.restore();
+        }
+
+        // ==========================================
+        // UI 및 캔버스 렌더링 라우터
+        // ==========================================
+        function renderRoomState(data) {
+            const badge = document.getElementById('roomStatusBadge');
+            const newBadgeText = data.status === 'playing' ? '게임중' : (data.guest ? '참여불가능' : '참여가능');
+            badge.innerText = newBadgeText;
+            badge.className = 'badge ' + (data.status === 'playing' ? 'badge-playing' : (data.guest ? 'badge-full' : 'badge-open'));
+
+            document.getElementById('roomTitleText').innerText = `[${currentGameObj ? currentGameObj.title : ''}] ${data.host.name}님의 방`;
+
+            const hWins = data.host.wins || 0; const gWins = data.guest ? (data.guest.wins || 0) : 0;
+            if (currentGameId === 'omok') {
+                document.getElementById('roomScoreText').innerText = `흑 ${hWins}승 vs 백 ${gWins}승`;
+            } else if (currentGameId === 'abalone') {
+                const hScore = data.host.score || 0; const gScore = data.guest ? (data.guest.score || 0) : 0;
+                document.getElementById('roomScoreText').innerText = `밀어낸 구슬: 흑 ${hScore}/6 vs 백 ${gScore}/6 (전적 ${hWins}:${gWins})`;
+            } else if (currentGameId === 'janggi') {
+                const rawBoard = data.boardState ? (Array.isArray(data.boardState) ? data.boardState : Object.values(data.boardState)) : [];
+                const choLeft = rawBoard.filter(p => p.team === 'cho' && !p.out).length;
+                const hanLeft = rawBoard.filter(p => p.team === 'han' && !p.out).length;
+                document.getElementById('roomScoreText').innerText = `남은 기물: 초 ${choLeft} vs 한 ${hanLeft} (전적 ${hWins}:${gWins})`;
+            }
+
+            document.getElementById('hostNameDisplay').innerText = data.host.name;
+            document.getElementById('hostUndoDisplay').innerText = `무르기: ${data.host.undoLeft ?? 1}개`;
+            const hostReadyTag = document.getElementById('hostReadyTag');
+            hostReadyTag.innerText = data.host.ready ? '준비 완료!' : '준비 대기';
+            hostReadyTag.className = 'ready-tag ' + (data.host.ready ? 'on' : '');
+
+            const guestNameEl = document.getElementById('guestNameDisplay');
+            const guestReadyTag = document.getElementById('guestReadyTag');
+            if (data.guest) {
+                guestNameEl.innerText = data.guest.name;
+                document.getElementById('guestUndoDisplay').innerText = `무르기: ${data.guest.undoLeft ?? 1}개`;
+                guestReadyTag.innerText = data.guest.ready ? '준비 완료!' : '준비 대기';
+                guestReadyTag.className = 'ready-tag ' + (data.guest.ready ? 'on' : '');
+            } else {
+                guestNameEl.innerText = '상대 대기 중...';
+                guestReadyTag.innerText = '입장 대기';
+                guestReadyTag.className = 'ready-tag';
+            }
+
+            const cardHost = document.getElementById('cardHost');
+            const cardGuest = document.getElementById('cardGuest');
+            if (data.status === 'playing') {
+                cardHost.className = 'player-card ' + (data.turn === 1 ? 'active-turn' : 'inactive-turn');
+                cardGuest.className = 'player-card ' + (data.turn === 2 ? 'active-turn' : 'inactive-turn');
+            } else {
+                cardHost.className = 'player-card ' + (data.host.ready ? 'ready' : '');
+                cardGuest.className = 'player-card ' + (data.guest && data.guest.ready ? 'ready' : '');
+            }
+
+            const btnReady = document.getElementById('btnReady');
+            const btnKick = document.getElementById('btnKick');
+            const btnUndo = document.getElementById('btnUndo');
+            const btnPause = document.getElementById('btnPause');
+            const btnLeave = document.getElementById('btnLeave');
+
+            if (data.status === 'playing') {
+                btnReady.style.display = 'none'; btnKick.style.display = 'none';
+                btnPause.style.display = 'inline-block';
+                btnPause.innerText = data.isPaused ? '게임 재개' : '일시정지';
+                btnUndo.style.display = 'inline-block';
+
+                const myObj = myRole === 'host' ? data.host : data.guest;
+                const myTurnNum = myRole === 'host' ? 1 : 2;
+                let canUndoNow = false;
+                if (currentGameId === 'omok') {
+                    const moves = data.moves || [];
+                    canUndoNow = myObj && myObj.undoLeft > 0 && moves.length > 0 && moves[moves.length - 1].p === myTurnNum && !data.isPaused;
+                } else if (currentGameId === 'abalone') {
+                    canUndoNow = myObj && myObj.undoLeft > 0 && data.prevSnapshot && data.prevSnapshot.mover === myTurnNum && !data.isPaused;
+                } else if (currentGameId === 'janggi') {
+                    canUndoNow = myObj && myObj.undoLeft > 0 && data.prevSnapshot && data.prevSnapshot.mover === myTurnNum && !data.isPaused && !data.activeShot && !jk_isMoving;
+                }
+                btnUndo.disabled = !canUndoNow;
+                btnUndo.innerText = `무르기(${myObj ? myObj.undoLeft : 0})`;
+                btnLeave.disabled = false;
+            } else {
+                btnReady.style.display = 'inline-block';
+                const myObj = myRole === 'host' ? data.host : data.guest;
+                const amIReady = myObj && myObj.ready;
+                btnReady.innerText = amIReady ? '준비 취소' : '준비 완료';
+                btnReady.className = 'btn btn-sm ' + (amIReady ? 'btn-orange' : 'btn-green');
+
+                btnLeave.disabled = !!amIReady;
+                btnKick.style.display = (myRole === 'host' && data.guest) ? 'inline-block' : 'none';
+                btnUndo.style.display = 'none';
+                btnPause.style.display = 'none';
+            }
+
+            const overlay = document.getElementById('boardOverlay');
+            const ovTitle = document.getElementById('overlayTitle');
+            const ovDesc = document.getElementById('overlayDesc');
+            const ovBtn = document.getElementById('overlayActionBtn');
+
+            if (data.status === 'playing') {
+                if (data.isPaused) {
+                    overlay.classList.add('show');
+                    ovTitle.innerText = '⏸️ 게임 일시정지 중';
+                    ovDesc.innerText = `${data.pausedBy}님이 일시정지했습니다.`;
+                    ovBtn.style.display = 'inline-block';
+                } else {
+                    overlay.classList.remove('show');
+                }
+            } else {
+                overlay.classList.add('show'); ovBtn.style.display = 'none';
+                if (data.winner === 1 || data.winner === 2) {
+                    const winName = data.winner === 1 ? data.host.name : (data.guest ? data.guest.name : '상대방');
+                    ovTitle.innerText = `🏆 ${winName} 승리! (${data.winReason})`;
+                    ovDesc.innerText = data.guest ? '다시 하시려면 양쪽 모두 [준비 완료]를 눌러주세요!' : '새로운 상대방의 입장을 기다리는 중입니다.';
+                } else if (data.winner === 3) {
+                    ovTitle.innerText = `🤝 무승부! (${data.winReason})`;
+                    ovDesc.innerText = data.guest ? '다시 하시려면 양쪽 모두 [준비 완료]를 눌러주세요!' : '새로운 상대방의 입장을 기다리는 중입니다.';
+                } else if (!data.guest) {
+                    ovTitle.innerText = '상대방 입장을 기다리는 중...';
+                    ovDesc.innerText = '대기실에서 다른 플레이어가 참여하면 준비할 수 있습니다.';
+                } else {
+                    ovTitle.innerText = '대국 준비 대기 중';
+                    ovDesc.innerText = '두 플레이어가 모두 [준비 완료]를 누르면 게임이 시작됩니다.';
+                }
+            }
+
+            if (currentGameId === 'omok') {
+                drawOmokBoard(data.moves || []);
+            } else if (currentGameId === 'abalone') {
+                triggerAbaloneRenderLoop();
+            } else if (currentGameId === 'janggi') {
+                syncJanggiFromRoomData(data);
+            }
+        }
+
+        // --- 오목 판 그리기 ---
+        function drawOmokBoard(moves) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#dcb35c';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            ctx.strokeStyle = '#333';
+            ctx.lineWidth = 1;
+            const cellSize = canvas.width / OMOK_SIZE;
+            const offset = cellSize / 2;
+
+            for (let i = 0; i < OMOK_SIZE; i++) {
+                ctx.beginPath();
+                ctx.moveTo(offset, i * cellSize + offset);
+                ctx.lineTo(canvas.width - offset, i * cellSize + offset);
+                ctx.stroke();
+
+                ctx.beginPath();
+                ctx.moveTo(i * cellSize + offset, offset);
+                ctx.lineTo(i * cellSize + offset, canvas.height - offset);
+                ctx.stroke();
+            }
+
+            [3, 7, 11].forEach(r => {
+                [3, 7, 11].forEach(c => {
+                    ctx.beginPath();
+                    ctx.arc(c * cellSize + offset, r * cellSize + offset, 3, 0, Math.PI * 2);
+                    ctx.fillStyle = '#222'; ctx.fill();
+                });
+            });
+
+            let board = Array(OMOK_SIZE).fill(null).map(() => Array(OMOK_SIZE).fill(0));
+            let lastM = null;
+            moves.forEach(m => {
+                board[m.r][m.c] = m.p;
+                lastM = m;
+            });
+
+            for (let r = 0; r < OMOK_SIZE; r++) {
+                for (let c = 0; c < OMOK_SIZE; c++) {
+                    if (board[r][c] !== 0) {
+                        drawOmokStone(c * cellSize + offset, r * cellSize + offset, cellSize * 0.43, board[r][c]);
+                    }
+                }
+            }
+
+            if (lastM) {
+                ctx.beginPath();
+                ctx.arc(lastM.c * cellSize + offset, lastM.r * cellSize + offset, 4.5, 0, Math.PI * 2);
+                ctx.fillStyle = '#e74c3c'; ctx.fill();
+            }
+        }
+
+        function drawOmokStone(x, y, radius, player) {
+            ctx.beginPath();
+            ctx.arc(x, y, radius, 0, Math.PI * 2);
+            const grad = ctx.createRadialGradient(x - radius/3, y - radius/3, radius/8, x, y, radius);
+            if (player === 1) {
+                grad.addColorStop(0, '#666'); grad.addColorStop(1, '#111');
+            } else {
+                grad.addColorStop(0, '#fff'); grad.addColorStop(1, '#cfd8dc');
+            }
+            ctx.fillStyle = grad;
+            ctx.shadowColor = 'rgba(0,0,0,0.3)'; ctx.shadowBlur = 4; ctx.shadowOffsetX = 1; ctx.shadowOffsetY = 2;
+            ctx.fill();
+            ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
+        }
+
+        // --- 아발론 판 그리기 ---
+        function hexToPixel(q, r) {
+            const centerX = canvas.width / 2; const centerY = canvas.height / 2;
+            const x = centerX + HEX_RADIUS * Math.sqrt(3) * (q + r / 2);
+            const y = centerY + HEX_RADIUS * (3 / 2) * r;
+            return { x, y };
+        }
+
+        function triggerAbaloneRenderLoop() {
+            if (av_animFrame) cancelAnimationFrame(av_animFrame);
+            function step() {
+                if (!currentRoomData || currentGameId !== 'abalone') return;
+                drawAbaloneBoard(currentRoomData.boardState || {}, currentRoomData.lastMoveInfo);
+                if (currentRoomData.lastMoveInfo && (Date.now() - currentRoomData.lastMoveInfo.timestamp) < 2300) {
+                    av_animFrame = requestAnimationFrame(step);
+                }
+            }
+            step();
+        }
+
+        function drawAbaloneBoard(boardObj, lastMoveInfo) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            const centerX = canvas.width / 2; const centerY = canvas.height / 2;
+
+            ctx.save();
+            ctx.beginPath();
+            for (let i = 0; i < 6; i++) {
+                const angle = (Math.PI / 3) * i; const r = 250;
+                const x = centerX + r * Math.cos(angle); const y = centerY + r * Math.sin(angle);
+                if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+            }
+            ctx.closePath();
+            ctx.fillStyle = '#dceefb';
+            ctx.fill();
+            ctx.lineWidth = 7;
+            ctx.strokeStyle = '#64a1d8';
+            ctx.stroke();
+            ctx.restore();
+
+            let traceAlpha = 0;
+            if (lastMoveInfo && lastMoveInfo.timestamp) {
+                const elapsed = Date.now() - lastMoveInfo.timestamp;
+                if (elapsed < 2200) {
+                    traceAlpha = Math.max(0, 1 - (elapsed / 2200));
+                }
+            }
+
+            for (const [k, val] of Object.entries(boardObj)) {
+                const { q, r } = parseKey(k);
+                const { x, y } = hexToPixel(q, r);
+
+                ctx.beginPath();
+                ctx.arc(x, y, MARBLE_RADIUS - 2, 0, Math.PI * 2);
+                ctx.fillStyle = '#b6d8f2';
+                ctx.fill();
+                ctx.strokeStyle = '#8abce6';
+                ctx.lineWidth = 1.5;
+                ctx.stroke();
+
+                if (val === 1 || val === 2) {
+                    const isSelected = av_selected.some(s => s.q === q && s.r === r);
+                    const isMovedDest = traceAlpha > 0 && lastMoveInfo.toCells && lastMoveInfo.toCells.some(c => c.q === q && c.r === r);
+
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.arc(x, y, MARBLE_RADIUS, 0, Math.PI * 2);
+
+                    const grad = ctx.createRadialGradient(x - 7, y - 7, 3, x, y, MARBLE_RADIUS);
+                    if (val === 1) {
+                        grad.addColorStop(0, '#555');
+                        grad.addColorStop(0.4, '#1e272e');
+                        grad.addColorStop(1, '#000000');
+                    } else {
+                        grad.addColorStop(0, '#ffffff');
+                        grad.addColorStop(0.6, '#f1f2f6');
+                        grad.addColorStop(1, '#ced6e0');
+                    }
+                    ctx.fillStyle = grad;
+                    ctx.shadowColor = 'rgba(0,0,0,0.35)';
+                    ctx.shadowBlur = 5;
+                    ctx.shadowOffsetY = 3;
+                    ctx.fill();
+
+                    ctx.lineWidth = 1.5;
+                    ctx.strokeStyle = val === 1 ? '#111' : '#7f8c8d';
+                    ctx.stroke();
+
+                    if (isMovedDest) {
+                        ctx.lineWidth = 3.5;
+                        ctx.strokeStyle = `rgba(255, 71, 87, ${traceAlpha})`;
+                        ctx.stroke();
+                    }
+
+                    if (isSelected) {
+                        ctx.lineWidth = 4;
+                        ctx.strokeStyle = '#ffa502';
+                        ctx.stroke();
+                    }
+                    ctx.restore();
+                }
+            }
+
+            if (traceAlpha > 0 && lastMoveInfo.fromCells && lastMoveInfo.dir) {
+                ctx.save();
+                lastMoveInfo.fromCells.forEach(cell => {
+                    const startPos = hexToPixel(cell.q, cell.r);
+                    const endPos = hexToPixel(cell.q + lastMoveInfo.dir.q, cell.r + lastMoveInfo.dir.r);
+
+                    ctx.beginPath();
+                    ctx.setLineDash([4, 3]);
+                    ctx.arc(startPos.x, startPos.y, MARBLE_RADIUS - 4, 0, Math.PI * 2);
+                    ctx.strokeStyle = `rgba(255, 107, 129, ${traceAlpha * 0.85})`;
+                    ctx.lineWidth = 2.5;
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+
+                    const angle = Math.atan2(endPos.y - startPos.y, endPos.x - startPos.x);
+                    const headLen = 9;
+                    ctx.beginPath();
+                    ctx.moveTo(startPos.x, startPos.y);
+                    ctx.lineTo(endPos.x, endPos.y);
+                    ctx.strokeStyle = `rgba(255, 71, 87, ${traceAlpha * 0.95})`;
+                    ctx.lineWidth = 3;
+                    ctx.stroke();
+
+                    ctx.beginPath();
+                    ctx.moveTo(endPos.x, endPos.y);
+                    ctx.lineTo(endPos.x - headLen * Math.cos(angle - Math.PI / 6), endPos.y - headLen * Math.sin(angle - Math.PI / 6));
+                    ctx.lineTo(endPos.x - headLen * Math.cos(angle + Math.PI / 6), endPos.y - headLen * Math.sin(angle + Math.PI / 6));
+                    ctx.closePath();
+                    ctx.fillStyle = `rgba(255, 71, 87, ${traceAlpha * 0.95})`;
+                    ctx.fill();
+                });
+                ctx.restore();
+            }
+
+            for (const move of av_validMoves) {
+                const { x, y } = hexToPixel(move.targetQ, move.targetR);
+                ctx.save();
+                ctx.beginPath();
+                ctx.arc(x, y, 9, 0, Math.PI * 2);
+                ctx.fillStyle = move.type === 'push' ? '#ff4757' : '#2ed573';
+                ctx.shadowColor = 'rgba(0,0,0,0.5)'; ctx.shadowBlur = 4;
+                ctx.fill();
+                ctx.lineWidth = 2; ctx.strokeStyle = '#fff'; ctx.stroke();
+                ctx.restore();
+            }
+        }
+
+        function formatDuration(sec) {
+            const m = String(Math.floor(sec / 60)).padStart(2, '0');
+            const s = String(sec % 60).padStart(2, '0');
+            return `${m}분 ${s}초`;
+        }
+
+        function formatMatchDate(ts) {
+            if (!ts) return '날짜 기록 없음';
+            const d = new Date(ts);
+            if (isNaN(d.getTime())) return '날짜 기록 없음';
+            const yyyy = d.getFullYear();
+            const mm = String(d.getMonth() + 1).padStart(2, '0');
+            const dd = String(d.getDate()).padStart(2, '0');
+            const hh = String(d.getHours()).padStart(2, '0');
+            const min = String(d.getMinutes()).padStart(2, '0');
+            return `${yyyy}.${mm}.${dd} ${hh}:${min}`;
+        }
+
+        function escapeHtml(str) {
+            if (!str) return '';
+            return String(str).replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s]));
+        }
+    </script>
+</body>
+</html>
