@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>온라인 보드게임 센터 (오목 & 아발론)</title>
+    <title>온라인 보드게임 센터 (오목 · 아발론 · 장기알까기)</title>
     <!-- Firebase SDK -->
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
@@ -41,7 +41,7 @@
 
         /* 게임 선택 그리드 */
         .game-grid {
-            display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            display: grid; grid-template-columns: repeat(auto-fill, minmax(185px, 1fr));
             gap: 12px; width: 100%; margin-top: 8px;
         }
         .game-card {
@@ -152,6 +152,15 @@
             touch-action: none;
             display: block;
             max-width: 100%;
+            height: auto;
+        }
+        .board-guide {
+            display: none;
+            margin-top: 8px;
+            font-size: 0.8rem;
+            color: #f5f6fa;
+            text-align: center;
+            line-height: 1.35;
         }
         .board-overlay {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
@@ -234,7 +243,7 @@
     <!-- [4] 네 번째 화면: 게임방 -->
     <div id="roomScreen" class="screen">
         <div class="card" style="padding: 12px 16px;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; flex-wrap: wrap; gap: 4px;">
                 <div>
                     <span id="roomStatusBadge" class="badge badge-open">참여가능</span>
                     <strong id="roomTitleText" style="margin-left: 6px; font-size: 0.95rem;">방</strong>
@@ -246,7 +255,7 @@
 
             <div class="players-bar">
                 <div id="cardHost" class="player-card">
-                    <span class="p-role">⚫ 흑돌 (선공/방장)</span>
+                    <span id="hostRoleDisplay" class="p-role">⚫ 흑돌 (선공/방장)</span>
                     <span id="hostNameDisplay" class="p-name">-</span>
                     <span id="hostUndoDisplay" class="p-meta">무르기: 1개</span>
                     <span id="hostTimerDisplay" class="p-timer">01:00</span>
@@ -262,7 +271,7 @@
                 </div>
 
                 <div id="cardGuest" class="player-card">
-                    <span class="p-role">⚪ 백돌 (후공/참여자)</span>
+                    <span id="guestRoleDisplay" class="p-role">⚪ 백돌 (후공/참여자)</span>
                     <span id="guestNameDisplay" class="p-name">대기 중...</span>
                     <span id="guestUndoDisplay" class="p-meta">무르기: 1개</span>
                     <span id="guestTimerDisplay" class="p-timer">01:00</span>
@@ -273,6 +282,7 @@
 
         <div class="board-container" id="boardContainerBox">
             <canvas id="gameCanvas" width="420" height="420"></canvas>
+            <div id="boardGuideText" class="board-guide"></div>
             <div id="boardOverlay" class="board-overlay show">
                 <h2 id="overlayTitle" style="color: #fff; justify-content: center; margin-bottom: 8px;">상대방을 기다리는 중...</h2>
                 <p id="overlayDesc" style="font-size: 0.9rem; margin-bottom: 15px; color: #ddd;">두 플레이어가 모두 [준비 완료]를 누르면 게임이 시작됩니다.</p>
@@ -292,7 +302,7 @@
 
     <script>
         // ==========================================
-        // 0. 게임 카탈로그 정의 (오목 & 아발론)
+        // 0. 게임 카탈로그 정의 (오목 · 아발론 · 장기알까기)
         // ==========================================
         const GAME_CATALOG = [
             {
@@ -307,6 +317,13 @@
                 title: '아발론 클래식',
                 icon: '🔵⚪',
                 desc: '연파랑 육각 보드에서 내 구슬로 상대 구슬 6개를 밀어내세요!',
+                active: true
+            },
+            {
+                id: 'janggi',
+                title: '장기 알까기',
+                icon: '🟢🔴',
+                desc: '장기 기물을 뒤로 당겨 튕겨내세요! 상대 왕(楚·漢)을 먼저 떨어뜨리면 승리!',
                 active: true
             }
         ];
@@ -333,7 +350,7 @@
         let currentGameId = null;
         let currentGameObj = null;
         let currentRoomId = null;
-        let myRole = null; // 'host'(흑돌=1) 또는 'guest'(백돌=2)
+        let myRole = null; // 'host'(1) 또는 'guest'(2)
         let currentRoomData = null;
         let lastKnownGuestName = "";
         let isFinishingMatch = false;
@@ -361,7 +378,30 @@
         let av_validMoves = [];
         let av_animFrame = null;
 
-        // 페이지 로드 시 저장된 닉네임 오토필(Auto-fill)
+        // 장기 알까기 전용 변수 (밸런스 스펙 유지)
+        const JK_BOARD_W = 540;
+        const JK_BOARD_H = 600;
+        const JK_FRICTION = 0.978;
+        const JK_MAX_PULL = 130;
+        const JK_STEP_MS = 1000 / 60;
+        const JK_PIECE_TYPES = {
+            KING: { radius: 26, mass: 5.5, maxSpeed: 10.5, cho: '楚', han: '漢' },
+            BIG:  { radius: 21, mass: 3.4, maxSpeed: 14.0, cho: { 차: '車', 포: '包' }, han: { 차: '車', 포: '包' } },
+            MID:  { radius: 18, mass: 1.8, maxSpeed: 16.0, cho: { 마: '馬', 상: '象' }, han: { 마: '馬', 상: '象' } },
+            PAWN: { radius: 14, mass: 0.45, maxSpeed: 15.5, cho: '卒', han: '兵' }
+        };
+        let jk_pieces = [];
+        let jk_isMoving = false;
+        let jk_isMyShot = false;
+        let jk_selectedPiece = null;
+        let jk_dragCurrent = { x: 0, y: 0 };
+        let jk_lastProcessedShotId = 0;
+        let jk_pendingPrevSnapshot = null;
+        let jk_animFrame = null;
+        let jk_lastFrameTime = 0;
+        let jk_accumulator = 0;
+
+        // 페이지 로드 시 저장된 닉네임 오토필
         window.addEventListener('DOMContentLoaded', () => {
             const savedName = localStorage.getItem(STORAGE_NICKNAME_KEY);
             const inputEl = document.getElementById('nicknameInput');
@@ -395,7 +435,7 @@
             document.getElementById(screenId).classList.add('active');
         }
 
-        // [1단계] 닉네임 확정 후 게임 선택 화면으로 이동
+        // [1단계] 닉네임 확정
         function confirmNickname() {
             const nameVal = document.getElementById('nicknameInput').value.trim();
             if (!nameVal) {
@@ -414,7 +454,7 @@
             setTimeout(() => document.getElementById('nicknameInput').focus(), 100);
         }
 
-        // [2단계] 게임 선택 시 바로 해당 게임 대기실로 진입
+        // [2단계] 게임 선택
         function selectGame(gameObj) {
             if (!gameObj.active) { alert('현재 준비 중인 게임입니다.'); return; }
             if (!myNickname) { showScreen('nicknameScreen'); return; }
@@ -438,6 +478,13 @@
         }
 
         function getGameBasePath(gameId) { return `games/${gameId}`; }
+
+        function getInitialBoardForGame(gameId) {
+            if (gameId === 'omok') return null;
+            if (gameId === 'abalone') return getDefaultAbaloneBoard();
+            if (gameId === 'janggi') return getDefaultJanggiBoard();
+            return null;
+        }
 
         function detachLobbyListeners() {
             if (lobbyRoomsRef) { lobbyRoomsRef.off(); lobbyRoomsRef = null; }
@@ -465,13 +512,11 @@
 
                 Object.keys(rooms).forEach(rId => {
                     const r = rooms[rId];
-                    // 방장 정보가 없는 비정상 방 정리
                     if (!r || !r.host) {
                         db.ref(`${basePath}/rooms/${rId}`).remove();
                         return;
                     }
 
-                    // 방장 하트비트(lastActive) 또는 turnStartTime 기준 3분 이상 응답 없는 유령방 자동 삭제
                     const lastPing = r.lastActive || r.turnStartTime || 0;
                     if (now - lastPing > ROOM_ZOMBIE_TIMEOUT_MS) {
                         db.ref(`${basePath}/rooms/${rId}`).remove();
@@ -535,9 +580,12 @@
                     const div = document.createElement('div');
                     div.className = 'history-item';
                     const dateStr = formatMatchDate(h.timestamp);
+                    const resultLine = h.isDraw
+                        ? `🤝 <b>무승부</b> (${escapeHtml(h.winner)} vs ${escapeHtml(h.loser)}) - ${escapeHtml(h.reason)}`
+                        : `🏆 <b>${escapeHtml(h.winner)}</b> 승 (패: ${escapeHtml(h.loser)}) - ${escapeHtml(h.reason)}`;
                     div.innerHTML = `
                         <div class="history-main">
-                            <span>🏆 <b>${escapeHtml(h.winner)}</b> 승 (패: ${escapeHtml(h.loser)}) - ${escapeHtml(h.reason)}</span>
+                            <span>${resultLine}</span>
                             <span class="history-date">📅 ${dateStr}</span>
                         </div>
                         <span class="history-duration">⏱️ ${formatDuration(h.durationSec || 0)}</span>
@@ -565,7 +613,7 @@
             myRole = 'host';
 
             const now = Date.now();
-            const initialBoard = currentGameId === 'omok' ? null : getDefaultAbaloneBoard();
+            const initialBoard = getInitialBoardForGame(currentGameId);
 
             const initialRoomData = {
                 roomId: newRoomId,
@@ -581,6 +629,7 @@
                 pausedBy: "",
                 gameStartTime: 0,
                 boardState: initialBoard,
+                activeShot: null,
                 lastMoveInfo: null,
                 prevSnapshot: null,
                 moves: [],
@@ -595,15 +644,14 @@
             }).catch(err => alert('방 생성 오류: ' + err.message));
         }
 
-        // 트랜잭션 기반 안전한 방 참여 (status 잔류 버그 해결)
         function joinRoom(rId) {
             if (!currentGameId) return;
             const targetRef = db.ref(`${getGameBasePath(currentGameId)}/rooms/${rId}`);
 
             targetRef.transaction(r => {
-                if (!r) return; // 방이 없음
+                if (!r) return;
                 if (!r.host || r.guest || r.status === 'playing') {
-                    return; // 참여 불가 시 트랜잭션 중단
+                    return;
                 }
                 r.guest = { id: myId, name: myNickname, ready: false, undoLeft: 1, wins: 0, score: 0 };
                 r.status = 'full';
@@ -634,17 +682,45 @@
             isFinishingMatch = false;
             const basePath = getGameBasePath(currentGameId);
 
+            // 게임별 역할 라벨 & 보드 스타일 설정
+            const hostRoleEl = document.getElementById('hostRoleDisplay');
+            const guestRoleEl = document.getElementById('guestRoleDisplay');
             const containerBox = document.getElementById('boardContainerBox');
+            const guideEl = document.getElementById('boardGuideText');
+
             if (currentGameId === 'omok') {
+                hostRoleEl.innerText = '⚫ 흑돌 (선공/방장)';
+                guestRoleEl.innerText = '⚪ 백돌 (후공/참여자)';
                 containerBox.style.background = '#dcb35c';
                 canvas.style.background = '#dcb35c';
                 canvas.style.borderRadius = '8px';
                 canvas.width = 420; canvas.height = 420;
-            } else {
+                guideEl.style.display = 'none';
+            } else if (currentGameId === 'abalone') {
+                hostRoleEl.innerText = '⚫ 흑돌 (선공/방장)';
+                guestRoleEl.innerText = '⚪ 백돌 (후공/참여자)';
                 containerBox.style.background = '#bfe0f8';
                 canvas.style.background = '#dceefb';
                 canvas.style.borderRadius = '50%';
                 canvas.width = 540; canvas.height = 540;
+                guideEl.style.display = 'none';
+            } else if (currentGameId === 'janggi') {
+                hostRoleEl.innerText = '🟢 초(楚) (선공/방장)';
+                guestRoleEl.innerText = '🔴 한(漢) (후공/참여자)';
+                containerBox.style.background = '#6d4c2f';
+                canvas.style.background = '#d4a359';
+                canvas.style.borderRadius = '4px';
+                canvas.width = JK_BOARD_W; canvas.height = JK_BOARD_H;
+                guideEl.style.display = 'block';
+                guideEl.innerText = '내 기물을 터치(클릭) 후 뒤로 당겨 원 크기·화살표 길이(파워)와 각도를 조절하세요.';
+
+                jk_pieces = deserializeJanggiPieces(getDefaultJanggiBoard());
+                jk_isMoving = false;
+                jk_isMyShot = false;
+                jk_selectedPiece = null;
+                jk_lastProcessedShotId = 0;
+                jk_pendingPrevSnapshot = null;
+                startJanggiLoop();
             }
 
             // 방장 하트비트 시작 (15초마다 생존 신호 갱신)
@@ -674,10 +750,9 @@
                 }
 
                 if (myRole === 'host' && !data.guest && data.status !== 'waiting') {
-                    // 게임 도중 상대방 연결이 비정상 종료된 경우 기권승 기록
                     if (data.status === 'playing' && lastKnownGuestName && !isFinishingMatch) {
                         isFinishingMatch = true;
-                        const durationSec = recordMatchHistory(data.host.name, lastKnownGuestName, '상대 연결 끊김(기권승)', data.gameStartTime);
+                        const durationSec = recordMatchHistory(data.host.name, lastKnownGuestName, '상대 연결 끊김(기권승)', data.gameStartTime, false);
                         pushRoomSystemChat(`🏆 [${data.host.name}] 기권승! (${lastKnownGuestName}님 연결 끊김, 소요시간: ${formatDuration(durationSec)})`);
                         const hostWins = (data.host.wins || 0) + 1;
                         lastKnownGuestName = "";
@@ -690,9 +765,10 @@
                             winner: 1,
                             winReason: '기권승',
                             moves: [],
+                            activeShot: null,
                             lastMoveInfo: null,
                             prevSnapshot: null,
-                            boardState: currentGameId === 'omok' ? null : getDefaultAbaloneBoard()
+                            boardState: getInitialBoardForGame(currentGameId)
                         });
                         return;
                     }
@@ -704,9 +780,10 @@
                         isPaused: false,
                         winner: 0,
                         moves: [],
+                        activeShot: null,
                         lastMoveInfo: null,
                         prevSnapshot: null,
-                        boardState: currentGameId === 'omok' ? null : getDefaultAbaloneBoard()
+                        boardState: getInitialBoardForGame(currentGameId)
                     });
                     return;
                 }
@@ -787,12 +864,11 @@
             const isPlayingNow = currentRoomData.status === 'playing';
             if (isPlayingNow && !confirm('게임 도중 나가시면 기권패 처리됩니다. 나가시겠습니까?')) return;
 
-            // 게임 중 퇴장 시 기권승 이력 저장
             if (isPlayingNow && currentRoomData.host && currentRoomData.guest && !isFinishingMatch) {
                 isFinishingMatch = true;
                 const winnerName = myRole === 'host' ? currentRoomData.guest.name : currentRoomData.host.name;
                 const loserName = myRole === 'host' ? currentRoomData.host.name : currentRoomData.guest.name;
-                recordMatchHistory(winnerName, loserName, '기권승', currentRoomData.gameStartTime);
+                recordMatchHistory(winnerName, loserName, '기권승', currentRoomData.gameStartTime, false);
             }
 
             if (myRole === 'host') {
@@ -810,12 +886,13 @@
                         'host/ready': false,
                         'host/wins': hostWins,
                         isPaused: false,
+                        activeShot: null,
                         winner: 1,
                         winReason: '기권승'
                     });
                 } else {
                     pushRoomSystemChat(`${myNickname}님이 퇴장했습니다.`);
-                    roomRef.update({ guest: null, status: 'waiting', 'host/ready': false, isPaused: false, winner: 0 });
+                    roomRef.update({ guest: null, status: 'waiting', 'host/ready': false, isPaused: false, activeShot: null, winner: 0 });
                 }
             }
             cleanupRoomAndReturn();
@@ -827,15 +904,17 @@
             if (localTimerInterval) clearInterval(localTimerInterval);
             if (heartbeatInterval) clearInterval(heartbeatInterval);
             if (av_animFrame) cancelAnimationFrame(av_animFrame);
+            if (jk_animFrame) cancelAnimationFrame(jk_animFrame);
             roomRef = null; roomChatRef = null; currentRoomId = null; currentRoomData = null; myRole = null;
             lastKnownGuestName = ""; isFinishingMatch = false;
+            jk_isMoving = false; jk_isMyShot = false; jk_selectedPiece = null; jk_lastProcessedShotId = 0; jk_pendingPrevSnapshot = null;
             showScreen('lobbyScreen');
         }
 
         // ==========================================
         // 승패 이력 저장 공통 함수
         // ==========================================
-        function recordMatchHistory(winnerName, loserName, reason, startTime) {
+        function recordMatchHistory(winnerName, loserName, reason, startTime, isDraw = false) {
             const durationSec = Math.max(1, Math.floor((Date.now() - (startTime || Date.now())) / 1000));
             if (!currentGameId || !winnerName || !loserName) return durationSec;
 
@@ -843,6 +922,7 @@
                 winner: winnerName,
                 loser: loserName,
                 reason: reason,
+                isDraw: !!isDraw,
                 durationSec: durationSec,
                 timestamp: Date.now()
             }).catch(err => console.error('승패 기록 저장 실패:', err));
@@ -855,8 +935,9 @@
         // ==========================================
         function startNewMatchInRoom() {
             const now = Date.now();
-            const initialBoard = currentGameId === 'omok' ? null : getDefaultAbaloneBoard();
+            const initialBoard = getInitialBoardForGame(currentGameId);
             av_selected = []; av_validMoves = [];
+            jk_isMoving = false; jk_isMyShot = false; jk_selectedPiece = null; jk_lastProcessedShotId = 0; jk_pendingPrevSnapshot = null;
             isFinishingMatch = false;
 
             roomRef.update({
@@ -869,6 +950,7 @@
                 pausedBy: "",
                 gameStartTime: now,
                 boardState: initialBoard,
+                activeShot: null,
                 lastMoveInfo: null,
                 prevSnapshot: null,
                 moves: [],
@@ -921,6 +1003,24 @@
                     prevSnapshot: null,
                     [undoPath]: 0
                 });
+            } else if (currentGameId === 'janggi') {
+                if (jk_isMoving || currentRoomData.activeShot) {
+                    alert('기물이 멈춘 후에 무르기를 사용할 수 있습니다.'); return;
+                }
+                const snap = currentRoomData.prevSnapshot;
+                if (!snap || snap.mover !== myTurnNum || !snap.boardState) {
+                    alert('무르기는 내가 방금 튕긴 직후(상대방이 튕기기 전)에만 사용할 수 있습니다!'); return;
+                }
+                jk_selectedPiece = null;
+                roomRef.update({
+                    boardState: snap.boardState,
+                    turn: myTurnNum,
+                    turnStartTime: Date.now(),
+                    remainingWhenPaused: 60,
+                    activeShot: null,
+                    prevSnapshot: null,
+                    [undoPath]: 0
+                });
             }
             pushRoomSystemChat(`${myNickname}님이 [무르기 쿠폰]을 사용하여 방금 수를 되돌렸습니다.`);
         }
@@ -953,6 +1053,7 @@
                 winner: winnerNum,
                 winReason: reason,
                 isPaused: false,
+                activeShot: null,
                 'host/ready': false,
                 'guest/ready': false,
                 'host/wins': hostWins,
@@ -965,9 +1066,11 @@
             if ((winnerNum === 1 || winnerNum === 2) && currentGameId) {
                 const winnerName = winnerNum === 1 ? hostName : guestName;
                 const loserName = winnerNum === 1 ? guestName : hostName;
-                const durationSec = recordMatchHistory(winnerName, loserName, reason, currentRoomData.gameStartTime);
-
+                const durationSec = recordMatchHistory(winnerName, loserName, reason, currentRoomData.gameStartTime, false);
                 pushRoomSystemChat(`🏆 [${winnerName}] 승리! (${reason}, 소요시간: ${formatDuration(durationSec)})`);
+            } else if (winnerNum === 3 && currentGameId) {
+                const durationSec = recordMatchHistory(hostName, guestName, reason, currentRoomData.gameStartTime, true);
+                pushRoomSystemChat(`🤝 무승부! (${reason}, 소요시간: ${formatDuration(durationSec)})`);
             }
         }
 
@@ -978,10 +1081,16 @@
                 return;
             }
 
+            // 장기 알까기 기물이 움직이는 중에는 시간 초과 판정 보류
+            const isShotInProgress = currentGameId === 'janggi' && (jk_isMoving || !!currentRoomData.activeShot);
+
             let remSec = currentRoomData.remainingWhenPaused || 60;
-            if (!currentRoomData.isPaused) {
+            if (!currentRoomData.isPaused && !isShotInProgress) {
                 const elapsed = Math.floor((Date.now() - currentRoomData.turnStartTime) / 1000);
                 remSec = Math.max(0, remSec - elapsed);
+            } else if (isShotInProgress) {
+                const elapsed = Math.floor((Date.now() - currentRoomData.turnStartTime) / 1000);
+                remSec = Math.max(1, remSec - elapsed);
             }
 
             const formatted = `00:${String(remSec).padStart(2, '0')}`;
@@ -993,7 +1102,7 @@
                 document.getElementById('hostTimerDisplay').innerText = '01:00';
             }
 
-            if (remSec <= 0 && !currentRoomData.isPaused && myRole === 'host' && !isFinishingMatch) {
+            if (remSec <= 0 && !currentRoomData.isPaused && !isShotInProgress && myRole === 'host' && !isFinishingMatch) {
                 const timeoutWinner = currentRoomData.turn === 1 ? 2 : 1;
                 if (currentGameId === 'omok') {
                     finishGame(timeoutWinner, '시간 초과', { moves: currentRoomData.moves || [] });
@@ -1017,10 +1126,34 @@
                 handleOmokClick(e);
             } else if (currentGameId === 'abalone') {
                 handleAbaloneClick(e);
+            } else if (currentGameId === 'janggi') {
+                handleJanggiStart(e);
             }
         });
 
-        // --- [오목 로직] ---
+        window.addEventListener('pointermove', e => {
+            if (currentGameId === 'janggi' && jk_selectedPiece) {
+                e.preventDefault();
+                handleJanggiMove(e);
+            }
+        }, { passive: false });
+
+        window.addEventListener('pointerup', e => {
+            if (currentGameId === 'janggi' && jk_selectedPiece) {
+                e.preventDefault();
+                handleJanggiEnd(e);
+            }
+        });
+
+        window.addEventListener('pointercancel', () => {
+            if (currentGameId === 'janggi' && jk_selectedPiece) {
+                jk_selectedPiece = null;
+            }
+        });
+
+        // ==========================================
+        // [게임 1] 오목 로직
+        // ==========================================
         function handleOmokClick(e) {
             const rect = canvas.getBoundingClientRect();
             const col = Math.floor((e.clientX - rect.left) / (rect.width / OMOK_SIZE));
@@ -1070,7 +1203,9 @@
             return false;
         }
 
-        // --- [아발론 로직] ---
+        // ==========================================
+        // [게임 2] 아발론 로직
+        // ==========================================
         function getDefaultAbaloneBoard() {
             const obj = {};
             for (let q = -4; q <= 4; q++) {
@@ -1281,6 +1416,521 @@
         }
 
         // ==========================================
+        // [게임 3] 장기 알까기 로직 (온라인 물리 동기화)
+        // ==========================================
+        function jkGetGridPos(col, row) {
+            const marginX = 45;
+            const marginY = 45;
+            const stepX = (JK_BOARD_W - marginX * 2) / 8;
+            const stepY = (JK_BOARD_H - marginY * 2) / 9;
+            return {
+                x: marginX + col * stepX,
+                y: marginY + row * stepY
+            };
+        }
+
+        function getDefaultJanggiBoard() {
+            const list = [];
+            const pushPiece = (col, row, team, typeKey, subName = '') => {
+                const pos = jkGetGridPos(col, row);
+                const spec = JK_PIECE_TYPES[typeKey];
+                const label = (typeKey === 'KING' || typeKey === 'PAWN') ? spec[team] : spec[team][subName];
+                list.push({ x: pos.x, y: pos.y, team, typeKey, label, out: false });
+            };
+
+            // 한(漢) - 상단 (guest = 2)
+            [
+                { col: 0, type: 'BIG', sub: '차' },
+                { col: 1, type: 'MID', sub: '상' },
+                { col: 2, type: 'MID', sub: '마' },
+                { col: 6, type: 'MID', sub: '상' },
+                { col: 7, type: 'MID', sub: '마' },
+                { col: 8, type: 'BIG', sub: '차' }
+            ].forEach(p => pushPiece(p.col, 0, 'han', p.type, p.sub));
+            pushPiece(4, 1, 'han', 'KING');
+            [1, 7].forEach(c => pushPiece(c, 2, 'han', 'BIG', '포'));
+            [0, 2, 4, 6, 8].forEach(c => pushPiece(c, 3, 'han', 'PAWN'));
+
+            // 초(楚) - 하단 (host = 1)
+            [
+                { col: 0, type: 'BIG', sub: '차' },
+                { col: 1, type: 'MID', sub: '마' },
+                { col: 2, type: 'MID', sub: '상' },
+                { col: 6, type: 'MID', sub: '마' },
+                { col: 7, type: 'MID', sub: '상' },
+                { col: 8, type: 'BIG', sub: '차' }
+            ].forEach(p => pushPiece(p.col, 9, 'cho', p.type, p.sub));
+            pushPiece(4, 8, 'cho', 'KING');
+            [1, 7].forEach(c => pushPiece(c, 7, 'cho', 'BIG', '포'));
+            [0, 2, 4, 6, 8].forEach(c => pushPiece(c, 6, 'cho', 'PAWN'));
+
+            return list;
+        }
+
+        function serializeJanggiPieces(piecesArr) {
+            return piecesArr.map(p => ({
+                x: Math.round(p.x * 1000) / 1000,
+                y: Math.round(p.y * 1000) / 1000,
+                team: p.team,
+                typeKey: p.typeKey,
+                label: p.label,
+                out: !!p.out
+            }));
+        }
+
+        function deserializeJanggiPieces(rawBoard) {
+            if (!rawBoard) return [];
+            const arr = Array.isArray(rawBoard) ? rawBoard : Object.values(rawBoard);
+            return arr.map(item => {
+                const spec = JK_PIECE_TYPES[item.typeKey];
+                return {
+                    x: item.x,
+                    y: item.y,
+                    vx: 0,
+                    vy: 0,
+                    team: item.team,
+                    typeKey: item.typeKey,
+                    isKing: item.typeKey === 'KING',
+                    radius: spec.radius,
+                    mass: spec.mass,
+                    maxSpeed: spec.maxSpeed,
+                    label: item.label,
+                    out: !!item.out
+                };
+            });
+        }
+
+        function syncJanggiFromRoomData(data) {
+            if (!data) return;
+            const myTurnNum = myRole === 'host' ? 1 : 2;
+
+            // 대기/종료 상태면 강제 동기화
+            if (data.status !== 'playing') {
+                jk_isMoving = false;
+                jk_isMyShot = false;
+                jk_selectedPiece = null;
+                jk_lastProcessedShotId = 0;
+                if (data.boardState) {
+                    jk_pieces = deserializeJanggiPieces(data.boardState);
+                }
+                return;
+            }
+
+            // 상대방이 방금 발사한 샷이 도착하면 내 화면에서도 동일 물리 시뮬레이션 재생
+            if (data.activeShot && data.activeShot.shotId && data.activeShot.shotId !== jk_lastProcessedShotId) {
+                jk_lastProcessedShotId = data.activeShot.shotId;
+                if (data.activeShot.mover !== myTurnNum) {
+                    jk_pieces = deserializeJanggiPieces(data.activeShot.startPieces);
+                    const target = jk_pieces[data.activeShot.pieceIdx];
+                    if (target && !target.out) {
+                        target.vx = data.activeShot.vx;
+                        target.vy = data.activeShot.vy;
+                        jk_isMoving = true;
+                        jk_isMyShot = false;
+                        jk_selectedPiece = null;
+                    }
+                    return;
+                }
+            }
+
+            // 움직이지 않는 상태라면 DB의 최신 기물 좌표로 동기화 (무르기 포함)
+            if (!jk_isMoving && data.boardState) {
+                jk_pieces = deserializeJanggiPieces(data.boardState);
+            }
+        }
+
+        function getJanggiPointerPos(e) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = JK_BOARD_W / rect.width;
+            const scaleY = JK_BOARD_H / rect.height;
+            return {
+                x: (e.clientX - rect.left) * scaleX,
+                y: (e.clientY - rect.top) * scaleY
+            };
+        }
+
+        function handleJanggiStart(e) {
+            if (jk_isMoving || (currentRoomData && currentRoomData.activeShot)) return;
+            const myTeam = myRole === 'host' ? 'cho' : 'han';
+            const pos = getJanggiPointerPos(e);
+
+            for (const p of jk_pieces) {
+                if (!p.out && p.team === myTeam) {
+                    if (Math.hypot(p.x - pos.x, p.y - pos.y) <= p.radius + 8) {
+                        jk_selectedPiece = p;
+                        jk_dragCurrent = { x: pos.x, y: pos.y };
+                        break;
+                    }
+                }
+            }
+        }
+
+        function handleJanggiMove(e) {
+            if (!jk_selectedPiece) return;
+            jk_dragCurrent = getJanggiPointerPos(e);
+        }
+
+        function handleJanggiEnd(e) {
+            if (!jk_selectedPiece) return;
+
+            const dx = jk_selectedPiece.x - jk_dragCurrent.x;
+            const dy = jk_selectedPiece.y - jk_dragCurrent.y;
+            const dist = Math.hypot(dx, dy);
+
+            if (dist > 6 && currentRoomData && currentRoomData.status === 'playing' && !currentRoomData.isPaused) {
+                const pieceIdx = jk_pieces.indexOf(jk_selectedPiece);
+                const myTurnNum = myRole === 'host' ? 1 : 2;
+                const clampedDist = Math.min(dist, JK_MAX_PULL);
+                const powerRatio = clampedDist / JK_MAX_PULL;
+                const speed = powerRatio * jk_selectedPiece.maxSpeed;
+                const vx = (dx / dist) * speed;
+                const vy = (dy / dist) * speed;
+
+                const startSnapshot = serializeJanggiPieces(jk_pieces);
+                const shotId = Date.now();
+
+                jk_lastProcessedShotId = shotId;
+                jk_pendingPrevSnapshot = {
+                    mover: myTurnNum,
+                    boardState: startSnapshot
+                };
+
+                jk_selectedPiece.vx = vx;
+                jk_selectedPiece.vy = vy;
+                jk_isMoving = true;
+                jk_isMyShot = true;
+
+                // 상대방 실시간 애니메이션 재생용 activeShot 전송
+                roomRef.child('activeShot').set({
+                    shotId: shotId,
+                    mover: myTurnNum,
+                    pieceIdx: pieceIdx,
+                    vx: vx,
+                    vy: vy,
+                    startPieces: startSnapshot
+                });
+            }
+
+            jk_selectedPiece = null;
+        }
+
+        function stepJanggiPhysics() {
+            let anyMoving = false;
+
+            for (const p of jk_pieces) {
+                if (p.out) continue;
+                p.x += p.vx;
+                p.y += p.vy;
+                p.vx *= JK_FRICTION;
+                p.vy *= JK_FRICTION;
+
+                if (Math.hypot(p.vx, p.vy) < 0.15) {
+                    p.vx = 0;
+                    p.vy = 0;
+                }
+
+                if (p.x < 0 || p.x > JK_BOARD_W || p.y < 0 || p.y > JK_BOARD_H) {
+                    p.out = true;
+                    p.vx = 0;
+                    p.vy = 0;
+                }
+
+                if (p.vx !== 0 || p.vy !== 0) {
+                    anyMoving = true;
+                }
+            }
+
+            // 충돌 판정 (기존 밸런스·반발계수 0.75 동일)
+            for (let i = 0; i < jk_pieces.length; i++) {
+                for (let j = i + 1; j < jk_pieces.length; j++) {
+                    const p1 = jk_pieces[i];
+                    const p2 = jk_pieces[j];
+                    if (p1.out || p2.out) continue;
+
+                    const dx = p2.x - p1.x;
+                    const dy = p2.y - p1.y;
+                    const dist = Math.hypot(dx, dy);
+                    const minDist = p1.radius + p2.radius;
+
+                    if (dist < minDist && dist > 0) {
+                        const nx = dx / dist;
+                        const ny = dy / dist;
+                        const overlap = minDist - dist;
+                        const totalMass = p1.mass + p2.mass;
+
+                        p1.x -= nx * overlap * (p2.mass / totalMass);
+                        p1.y -= ny * overlap * (p2.mass / totalMass);
+                        p2.x += nx * overlap * (p1.mass / totalMass);
+                        p2.y += ny * overlap * (p1.mass / totalMass);
+
+                        const rvx = p2.vx - p1.vx;
+                        const rvy = p2.vy - p1.vy;
+                        const velAlongNormal = rvx * nx + rvy * ny;
+
+                        if (velAlongNormal > 0) continue;
+
+                        const restitution = 0.75;
+                        let impulse = -(1 + restitution) * velAlongNormal;
+                        impulse /= (1 / p1.mass + 1 / p2.mass);
+
+                        const impulseX = impulse * nx;
+                        const impulseY = impulse * ny;
+
+                        p1.vx -= (1 / p1.mass) * impulseX;
+                        p1.vy -= (1 / p1.mass) * impulseY;
+                        p2.vx += (1 / p2.mass) * impulseX;
+                        p2.vy += (1 / p2.mass) * impulseY;
+                    }
+                }
+            }
+
+            return anyMoving;
+        }
+
+        function onJanggiShotStopped() {
+            const wasMyShot = jk_isMyShot;
+            jk_isMoving = false;
+            jk_isMyShot = false;
+
+            if (!currentRoomData || currentRoomData.status !== 'playing') return;
+
+            if (wasMyShot) {
+                const finalBoard = serializeJanggiPieces(jk_pieces);
+                const choKing = jk_pieces.find(p => p.team === 'cho' && p.isKing);
+                const hanKing = jk_pieces.find(p => p.team === 'han' && p.isKing);
+
+                if (choKing.out && hanKing.out) {
+                    finishGame(3, '양쪽 왕 동반 아웃', { boardState: finalBoard, activeShot: null, prevSnapshot: null });
+                } else if (hanKing.out) {
+                    finishGame(1, '漢(한) 왕 아웃', { boardState: finalBoard, activeShot: null, prevSnapshot: null });
+                } else if (choKing.out) {
+                    finishGame(2, '楚(초) 왕 아웃', { boardState: finalBoard, activeShot: null, prevSnapshot: null });
+                } else {
+                    const myTurnNum = myRole === 'host' ? 1 : 2;
+                    const nextTurn = myTurnNum === 1 ? 2 : 1;
+                    roomRef.update({
+                        boardState: finalBoard,
+                        activeShot: null,
+                        prevSnapshot: jk_pendingPrevSnapshot,
+                        turn: nextTurn,
+                        turnStartTime: Date.now(),
+                        remainingWhenPaused: 60
+                    });
+                }
+                jk_pendingPrevSnapshot = null;
+            } else {
+                // 상대 샷 애니메이션 종료 후, 이미 최종 좌표가 도착해 있으면 정밀 동기화
+                if (!currentRoomData.activeShot && currentRoomData.boardState) {
+                    jk_pieces = deserializeJanggiPieces(currentRoomData.boardState);
+                }
+            }
+        }
+
+        function startJanggiLoop() {
+            if (jk_animFrame) cancelAnimationFrame(jk_animFrame);
+            jk_lastFrameTime = performance.now();
+            jk_accumulator = 0;
+
+            function frame(now) {
+                if (currentGameId !== 'janggi' || !currentRoomId) return;
+
+                const delta = Math.min(now - jk_lastFrameTime, 100);
+                jk_lastFrameTime = now;
+
+                const paused = currentRoomData && currentRoomData.isPaused;
+                if (jk_isMoving && !paused) {
+                    jk_accumulator += delta;
+                    let steps = 0;
+                    while (jk_accumulator >= JK_STEP_MS && steps < 5 && jk_isMoving) {
+                        const stillMoving = stepJanggiPhysics();
+                        jk_accumulator -= JK_STEP_MS;
+                        steps++;
+                        if (!stillMoving) {
+                            jk_accumulator = 0;
+                            onJanggiShotStopped();
+                            break;
+                        }
+                    }
+                } else {
+                    jk_accumulator = 0;
+                }
+
+                drawJanggiBoard();
+                jk_animFrame = requestAnimationFrame(frame);
+            }
+
+            jk_animFrame = requestAnimationFrame(frame);
+        }
+
+        function drawJanggiBoard() {
+            ctx.clearRect(0, 0, JK_BOARD_W, JK_BOARD_H);
+            ctx.fillStyle = '#d4a359';
+            ctx.fillRect(0, 0, JK_BOARD_W, JK_BOARD_H);
+
+            ctx.strokeStyle = '#3d2b1f';
+            ctx.lineWidth = 1.5;
+
+            for (let r = 0; r < 10; r++) {
+                const start = jkGetGridPos(0, r);
+                const end = jkGetGridPos(8, r);
+                ctx.beginPath();
+                ctx.moveTo(start.x, start.y);
+                ctx.lineTo(end.x, end.y);
+                ctx.stroke();
+            }
+
+            for (let c = 0; c < 9; c++) {
+                const start = jkGetGridPos(c, 0);
+                const end = jkGetGridPos(c, 9);
+                ctx.beginPath();
+                ctx.moveTo(start.x, start.y);
+                ctx.lineTo(end.x, end.y);
+                ctx.stroke();
+            }
+
+            const drawDiag = (c1, r1, c2, r2) => {
+                const p1 = jkGetGridPos(c1, r1);
+                const p2 = jkGetGridPos(c2, r2);
+                ctx.beginPath();
+                ctx.moveTo(p1.x, p1.y);
+                ctx.lineTo(p2.x, p2.y);
+                ctx.stroke();
+            };
+            drawDiag(3, 0, 5, 2);
+            drawDiag(5, 0, 3, 2);
+            drawDiag(3, 7, 5, 9);
+            drawDiag(5, 7, 3, 9);
+
+            for (const p of jk_pieces) {
+                drawJanggiPiece(p);
+            }
+
+            drawJanggiAimGuide();
+        }
+
+        function drawJanggiOctagon(r, fillStyle, strokeStyle, lineWidth = 2) {
+            const sides = 8;
+            const offset = Math.PI / 8;
+            ctx.beginPath();
+            for (let i = 0; i < sides; i++) {
+                const angle = offset + (i * 2 * Math.PI) / sides;
+                const px = r * Math.cos(angle);
+                const py = r * Math.sin(angle);
+                if (i === 0) ctx.moveTo(px, py);
+                else ctx.lineTo(px, py);
+            }
+            ctx.closePath();
+            if (fillStyle) {
+                ctx.fillStyle = fillStyle;
+                ctx.fill();
+            }
+            if (strokeStyle) {
+                ctx.strokeStyle = strokeStyle;
+                ctx.lineWidth = lineWidth;
+                ctx.stroke();
+            }
+        }
+
+        function drawJanggiPiece(p) {
+            if (p.out) return;
+            ctx.save();
+            ctx.translate(p.x, p.y);
+
+            ctx.shadowColor = 'rgba(0, 0, 0, 0.45)';
+            ctx.shadowBlur = 6;
+            ctx.shadowOffsetX = 3;
+            ctx.shadowOffsetY = 4;
+
+            drawJanggiOctagon(p.radius, '#f7e7ce', '#b58952');
+
+            ctx.shadowColor = 'transparent';
+            drawJanggiOctagon(p.radius - 3.5, null, p.team === 'cho' ? '#1b7a3d' : '#c0392b', 1.2);
+
+            ctx.fillStyle = p.team === 'cho' ? '#0f5c2b' : '#b31b1b';
+            ctx.font = `bold ${Math.floor(p.radius * 1.05)}px "Batang", "궁서", serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(p.label, 0, 1.5);
+
+            ctx.restore();
+        }
+
+        function drawJanggiAimGuide() {
+            if (!jk_selectedPiece) return;
+
+            let dx = jk_selectedPiece.x - jk_dragCurrent.x;
+            let dy = jk_selectedPiece.y - jk_dragCurrent.y;
+            let dist = Math.hypot(dx, dy);
+
+            if (dist < 6) return;
+
+            if (dist > JK_MAX_PULL) {
+                dx = (dx / dist) * JK_MAX_PULL;
+                dy = (dy / dist) * JK_MAX_PULL;
+                dist = JK_MAX_PULL;
+            }
+
+            const powerRatio = dist / JK_MAX_PULL;
+            const dirX = dx / dist;
+            const dirY = dy / dist;
+
+            const minCircleR = jk_selectedPiece.radius + 4;
+            const maxCircleR = jk_selectedPiece.radius + 34;
+            const dynamicCircleR = minCircleR + (maxCircleR - minCircleR) * powerRatio;
+
+            const minArrowLen = 8;
+            const maxArrowLen = 36;
+            const dynamicArrowLen = minArrowLen + (maxArrowLen - minArrowLen) * powerRatio;
+
+            const r = 255;
+            const g = Math.floor(215 * (1 - powerRatio));
+            const b = 35;
+            const ringColor = `rgb(${r}, ${g}, ${b})`;
+
+            ctx.save();
+
+            ctx.beginPath();
+            ctx.arc(jk_selectedPiece.x, jk_selectedPiece.y, dynamicCircleR, 0, Math.PI * 2);
+            ctx.strokeStyle = ringColor;
+            ctx.lineWidth = 3.5;
+            ctx.stroke();
+
+            const arrowStart = dynamicCircleR + 3;
+            const startX = jk_selectedPiece.x + dirX * arrowStart;
+            const startY = jk_selectedPiece.y + dirY * arrowStart;
+            const tipX = jk_selectedPiece.x + dirX * (arrowStart + dynamicArrowLen);
+            const tipY = jk_selectedPiece.y + dirY * (arrowStart + dynamicArrowLen);
+
+            ctx.beginPath();
+            ctx.moveTo(startX, startY);
+            ctx.lineTo(tipX, tipY);
+            ctx.strokeStyle = ringColor;
+            ctx.lineWidth = 3;
+            ctx.lineCap = 'round';
+            ctx.stroke();
+
+            const headLen = 5 + 4 * powerRatio;
+            const angle = Math.atan2(dirY, dirX);
+            ctx.beginPath();
+            ctx.moveTo(tipX, tipY);
+            ctx.lineTo(tipX - headLen * Math.cos(angle - Math.PI / 6), tipY - headLen * Math.sin(angle - Math.PI / 6));
+            ctx.moveTo(tipX, tipY);
+            ctx.lineTo(tipX - headLen * Math.cos(angle + Math.PI / 6), tipY - headLen * Math.sin(angle + Math.PI / 6));
+            ctx.stroke();
+
+            ctx.fillStyle = '#fff';
+            ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+            ctx.lineWidth = 3;
+            ctx.font = 'bold 12px sans-serif';
+            ctx.textAlign = 'center';
+            const pctText = `${Math.round(powerRatio * 100)}%`;
+            ctx.strokeText(pctText, jk_selectedPiece.x, jk_selectedPiece.y - dynamicCircleR - 7);
+            ctx.fillText(pctText, jk_selectedPiece.x, jk_selectedPiece.y - dynamicCircleR - 7);
+
+            ctx.restore();
+        }
+
+        // ==========================================
         // UI 및 캔버스 렌더링 라우터
         // ==========================================
         function renderRoomState(data) {
@@ -1294,9 +1944,14 @@
             const hWins = data.host.wins || 0; const gWins = data.guest ? (data.guest.wins || 0) : 0;
             if (currentGameId === 'omok') {
                 document.getElementById('roomScoreText').innerText = `흑 ${hWins}승 vs 백 ${gWins}승`;
-            } else {
+            } else if (currentGameId === 'abalone') {
                 const hScore = data.host.score || 0; const gScore = data.guest ? (data.guest.score || 0) : 0;
                 document.getElementById('roomScoreText').innerText = `밀어낸 구슬: 흑 ${hScore}/6 vs 백 ${gScore}/6 (전적 ${hWins}:${gWins})`;
+            } else if (currentGameId === 'janggi') {
+                const rawBoard = data.boardState ? (Array.isArray(data.boardState) ? data.boardState : Object.values(data.boardState)) : [];
+                const choLeft = rawBoard.filter(p => p.team === 'cho' && !p.out).length;
+                const hanLeft = rawBoard.filter(p => p.team === 'han' && !p.out).length;
+                document.getElementById('roomScoreText').innerText = `남은 기물: 초 ${choLeft} vs 한 ${hanLeft} (전적 ${hWins}:${gWins})`;
             }
 
             document.getElementById('hostNameDisplay').innerText = data.host.name;
@@ -1346,8 +2001,10 @@
                 if (currentGameId === 'omok') {
                     const moves = data.moves || [];
                     canUndoNow = myObj && myObj.undoLeft > 0 && moves.length > 0 && moves[moves.length - 1].p === myTurnNum && !data.isPaused;
-                } else {
+                } else if (currentGameId === 'abalone') {
                     canUndoNow = myObj && myObj.undoLeft > 0 && data.prevSnapshot && data.prevSnapshot.mover === myTurnNum && !data.isPaused;
+                } else if (currentGameId === 'janggi') {
+                    canUndoNow = myObj && myObj.undoLeft > 0 && data.prevSnapshot && data.prevSnapshot.mover === myTurnNum && !data.isPaused && !data.activeShot && !jk_isMoving;
                 }
                 btnUndo.disabled = !canUndoNow;
                 btnUndo.innerText = `무르기(${myObj ? myObj.undoLeft : 0})`;
@@ -1385,6 +2042,9 @@
                     const winName = data.winner === 1 ? data.host.name : (data.guest ? data.guest.name : '상대방');
                     ovTitle.innerText = `🏆 ${winName} 승리! (${data.winReason})`;
                     ovDesc.innerText = data.guest ? '다시 하시려면 양쪽 모두 [준비 완료]를 눌러주세요!' : '새로운 상대방의 입장을 기다리는 중입니다.';
+                } else if (data.winner === 3) {
+                    ovTitle.innerText = `🤝 무승부! (${data.winReason})`;
+                    ovDesc.innerText = data.guest ? '다시 하시려면 양쪽 모두 [준비 완료]를 눌러주세요!' : '새로운 상대방의 입장을 기다리는 중입니다.';
                 } else if (!data.guest) {
                     ovTitle.innerText = '상대방 입장을 기다리는 중...';
                     ovDesc.innerText = '대기실에서 다른 플레이어가 참여하면 준비할 수 있습니다.';
@@ -1398,6 +2058,8 @@
                 drawOmokBoard(data.moves || []);
             } else if (currentGameId === 'abalone') {
                 triggerAbaloneRenderLoop();
+            } else if (currentGameId === 'janggi') {
+                syncJanggiFromRoomData(data);
             }
         }
 
