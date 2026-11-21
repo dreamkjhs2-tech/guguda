@@ -292,4 +292,931 @@
 
         <div class="card" style="padding: 12px 16px;">
             <h3>💬 방 대화창</h3>
-            <div id="roomChatBox" class="chat-box"
+            <div id="roomChatBox" class="chat-box" style="height: 100px;"></div>
+            <div class="chat-input-row">
+                <input type="text" id="roomChatInput" class="input-box" placeholder="상대방에게 메시지 입력..." maxlength="100" onkeypress="if(event.key==='Enter') sendRoomChat()">
+                <button class="btn" onclick="sendRoomChat()">전송</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ==========================================
+        // 0. 게임 카탈로그 정의 (오목 · 아발론 · 장기알까기)
+        // ==========================================
+        const GAME_CATALOG = [
+            {
+                id: 'omok',
+                title: '오목 (Omok)',
+                icon: '⚫⚪',
+                desc: '15x15 보드에서 가로·세로·대각선 5목을 먼저 완성하세요!',
+                active: true
+            },
+            {
+                id: 'abalone',
+                title: '아발론 클래식',
+                icon: '🔵⚪',
+                desc: '연파랑 육각 보드에서 내 구슬로 상대 구슬 6개를 밀어내세요!',
+                active: true
+            },
+            {
+                id: 'janggi',
+                title: '장기 알까기',
+                icon: '🟢🔴',
+                desc: '장기 기물을 뒤로 당겨 튕겨내세요! 상대 왕(楚·漢)을 먼저 떨어뜨리면 승리!',
+                active: true
+            }
+        ];
+
+        // ==========================================
+        // 1. Firebase 초기화
+        // ==========================================
+        const firebaseConfig = {
+            apiKey: "AIzaSyDXbfwJwByr0P9grU4QchVi7C2kf7WwutE",
+            authDomain: "omok-94ab2.firebaseapp.com",
+            databaseURL: "https://omok-94ab2-default-rtdb.firebaseio.com",
+            projectId: "omok-94ab2",
+            storageBucket: "omok-94ab2.firebasestorage.app",
+            messagingSenderId: "553777902232",
+            appId: "1:553777902232:web:05efbfdcef46b73b9dd6ed"
+        };
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.database();
+
+        const STORAGE_NICKNAME_KEY = 'boardgame_saved_nickname';
+        const ROOM_ZOMBIE_TIMEOUT_MS = 180000; // 3분 이상 방장 신호 없으면 유령방 자동 삭제
+        const myId = 'user_' + Math.random().toString(36).substr(2, 8);
+        let myNickname = "";
+        let currentGameId = null;
+        let currentGameObj = null;
+        let currentRoomId = null;
+        let myRole = null; // 'host'(1) 또는 'guest'(2)
+        let currentRoomData = null;
+        let lastKnownGuestName = "";
+        let isFinishingMatch = false;
+
+        let lobbyRoomsRef = null;
+        let lobbyChatRef = null;
+        let matchHistoryRef = null;
+        let roomRef = null;
+        let roomChatRef = null;
+        let localTimerInterval = null;
+        let heartbeatInterval = null;
+
+        // 캔버스 설정
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // 오목 전용 변수
+        const OMOK_SIZE = 15;
+
+        // 아발론 전용 변수
+        const HEX_RADIUS = 26;
+        const MARBLE_RADIUS = 21;
+        const A_DIRECTIONS = [{q:1,r:0}, {q:-1,r:0}, {q:0,r:1}, {q:0,r:-1}, {q:1,r:-1}, {q:-1,r:1}];
+        let av_selected = [];
+        let av_validMoves = [];
+        let av_animFrame = null;
+
+        // 장기 알까기 전용 변수 (밸런스 스펙 유지)
+        const JK_BOARD_W = 540;
+        const JK_BOARD_H = 600;
+        const JK_FRICTION = 0.978;
+        const JK_MAX_PULL = 130;
+        const JK_STEP_MS = 1000 / 60;
+        const JK_PIECE_TYPES = {
+            KING: { radius: 26, mass: 5.5, maxSpeed: 10.5, cho: '楚', han: '漢' },
+            BIG:  { radius: 21, mass: 3.4, maxSpeed: 14.0, cho: { 차: '車', 포: '包' }, han: { 차: '車', 포: '包' } },
+            MID:  { radius: 18, mass: 1.8, maxSpeed: 16.0, cho: { 마: '馬', 상: '象' }, han: { 마: '馬', 상: '象' } },
+            PAWN: { radius: 14, mass: 0.45, maxSpeed: 15.5, cho: '卒', han: '兵' }
+        };
+        let jk_pieces = [];
+        let jk_isMoving = false;
+        let jk_isMyShot = false;
+        let jk_selectedPiece = null;
+        let jk_dragCurrent = { x: 0, y: 0 };
+        let jk_lastProcessedShotId = 0;
+        let jk_pendingPrevSnapshot = null;
+        let jk_animFrame = null;
+        let jk_lastFrameTime = 0;
+        let jk_accumulator = 0;
+
+        // 페이지 로드 시 저장된 닉네임 오토필
+        window.addEventListener('DOMContentLoaded', () => {
+            const savedName = localStorage.getItem(STORAGE_NICKNAME_KEY);
+            const inputEl = document.getElementById('nicknameInput');
+            if (savedName) {
+                inputEl.value = savedName;
+            }
+            renderGameCatalog();
+        });
+
+        function renderGameCatalog() {
+            const grid = document.getElementById('gameCatalogGrid');
+            grid.innerHTML = '';
+            GAME_CATALOG.forEach(g => {
+                const card = document.createElement('div');
+                card.className = 'game-card ' + (g.active ? '' : 'disabled');
+                card.innerHTML = `
+                    <div class="game-icon">${g.icon}</div>
+                    <div class="game-title">${escapeHtml(g.title)}</div>
+                    <div class="game-desc">${escapeHtml(g.desc)}</div>
+                    <span class="badge ${g.active ? 'badge-open' : 'badge-full'}" style="margin-top:4px;">
+                        ${g.active ? '입장하기' : '업데이트 예정'}
+                    </span>
+                `;
+                card.onclick = () => selectGame(g);
+                grid.appendChild(card);
+            });
+        }
+
+        function showScreen(screenId) {
+            document.querySelectorAll('.screen').forEach(el => el.classList.remove('active'));
+            document.getElementById(screenId).classList.add('active');
+        }
+
+        // [1단계] 닉네임 확정
+        function confirmNickname() {
+            const nameVal = document.getElementById('nicknameInput').value.trim();
+            if (!nameVal) {
+                alert('닉네임을 입력해주세요!');
+                return;
+            }
+            myNickname = nameVal;
+            localStorage.setItem(STORAGE_NICKNAME_KEY, myNickname);
+            document.getElementById('portalMyName').innerText = myNickname;
+            showScreen('gameSelectScreen');
+        }
+
+        function editNickname() {
+            document.getElementById('nicknameInput').value = myNickname;
+            showScreen('nicknameScreen');
+            setTimeout(() => document.getElementById('nicknameInput').focus(), 100);
+        }
+
+        // [2단계] 게임 선택
+        function selectGame(gameObj) {
+            if (!gameObj.active) { alert('현재 준비 중인 게임입니다.'); return; }
+            if (!myNickname) { showScreen('nicknameScreen'); return; }
+
+            currentGameId = gameObj.id;
+            currentGameObj = gameObj;
+
+            document.getElementById('lobbyMyName').innerText = myNickname;
+            document.getElementById('lobbyGameBadge').innerText = `현재 게임: ${currentGameObj.title}`;
+            document.getElementById('lobbyChatTitle').innerText = currentGameObj.title;
+
+            showScreen('lobbyScreen');
+            attachLobbyListeners(currentGameId);
+        }
+
+        function changeGameFromLobby() {
+            detachLobbyListeners();
+            currentGameId = null;
+            currentGameObj = null;
+            showScreen('gameSelectScreen');
+        }
+
+        function getGameBasePath(gameId) { return `games/${gameId}`; }
+
+        function getInitialBoardForGame(gameId) {
+            if (gameId === 'omok') return null;
+            if (gameId === 'abalone') return getDefaultAbaloneBoard();
+            if (gameId === 'janggi') return getDefaultJanggiBoard();
+            return null;
+        }
+
+        function detachLobbyListeners() {
+            if (lobbyRoomsRef) { lobbyRoomsRef.off(); lobbyRoomsRef = null; }
+            if (lobbyChatRef) { lobbyChatRef.off(); lobbyChatRef = null; }
+            if (matchHistoryRef) { matchHistoryRef.off(); matchHistoryRef = null; }
+        }
+
+        function attachLobbyListeners(gameId) {
+            detachLobbyListeners();
+            const basePath = getGameBasePath(gameId);
+
+            lobbyRoomsRef = db.ref(`${basePath}/rooms`);
+            lobbyRoomsRef.on('value', snapshot => {
+                const rooms = snapshot.val();
+                const listEl = document.getElementById('roomList');
+                listEl.innerHTML = '';
+
+                if (!rooms) {
+                    listEl.innerHTML = '<p style="text-align: center; color: #888; margin-top: 35px;">생성된 방이 없습니다. 방을 만들어 보세요!</p>';
+                    return;
+                }
+
+                let visibleCount = 0;
+                const now = Date.now();
+
+                Object.keys(rooms).forEach(rId => {
+                    const r = rooms[rId];
+                    if (!r || !r.host) {
+                        db.ref(`${basePath}/rooms/${rId}`).remove();
+                        return;
+                    }
+
+                    const lastPing = r.lastActive || r.turnStartTime || 0;
+                    if (now - lastPing > ROOM_ZOMBIE_TIMEOUT_MS) {
+                        db.ref(`${basePath}/rooms/${rId}`).remove();
+                        return;
+                    }
+
+                    visibleCount++;
+                    let badgeClass = 'badge-open';
+                    let statusText = '참여가능 (1/2)';
+                    let canJoin = true;
+
+                    if (r.status === 'playing') {
+                        badgeClass = 'badge-playing'; statusText = '게임중 (2/2)'; canJoin = false;
+                    } else if (r.guest) {
+                        badgeClass = 'badge-full'; statusText = '참여불가능 (2/2)'; canJoin = false;
+                    }
+
+                    const item = document.createElement('div');
+                    item.className = 'room-item';
+                    item.innerHTML = `
+                        <div>
+                            <span class="badge ${badgeClass}">${statusText}</span>
+                            <strong style="margin-left: 8px;">${escapeHtml(r.host.name)}님의 방</strong>
+                            ${r.guest ? `<span style="font-size:0.8rem; color:#666;"> vs ${escapeHtml(r.guest.name)}</span>` : ''}
+                        </div>
+                        ${canJoin ? `<button class="btn btn-orange btn-sm" onclick="joinRoom('${rId}')">참여</button>` : `<button class="btn btn-sm" disabled>불가</button>`}
+                    `;
+                    listEl.appendChild(item);
+                });
+
+                if (visibleCount === 0) {
+                    listEl.innerHTML = '<p style="text-align: center; color: #888; margin-top: 35px;">생성된 방이 없습니다. 방을 만들어 보세요!</p>';
+                }
+            });
+
+            lobbyChatRef = db.ref(`${basePath}/lobbyChat`).limitToLast(40);
+            lobbyChatRef.on('value', snapshot => {
+                const chatBox = document.getElementById('lobbyChatBox');
+                chatBox.innerHTML = '';
+                snapshot.forEach(child => {
+                    const m = child.val();
+                    const div = document.createElement('div');
+                    div.className = 'chat-msg';
+                    div.innerHTML = `<b>${escapeHtml(m.name)}:</b> ${escapeHtml(m.text)}`;
+                    chatBox.appendChild(div);
+                });
+                chatBox.scrollTop = chatBox.scrollHeight;
+            });
+
+            matchHistoryRef = db.ref(`${basePath}/matchHistory`).limitToLast(20);
+            matchHistoryRef.on('value', snapshot => {
+                const histEl = document.getElementById('matchHistoryList');
+                histEl.innerHTML = '';
+                if (!snapshot.exists()) {
+                    histEl.innerHTML = '<p style="text-align: center; color: #888; margin-top: 20px;">아직 기록된 대국이 없습니다.</p>';
+                    return;
+                }
+                const items = [];
+                snapshot.forEach(child => items.push(child.val()));
+                items.reverse().forEach(h => {
+                    const div = document.createElement('div');
+                    div.className = 'history-item';
+                    const dateStr = formatMatchDate(h.timestamp);
+                    const resultLine = h.isDraw
+                        ? `🤝 <b>무승부</b> (${escapeHtml(h.winner)} vs ${escapeHtml(h.loser)}) - ${escapeHtml(h.reason)}`
+                        : `🏆 <b>${escapeHtml(h.winner)}</b> 승 (패: ${escapeHtml(h.loser)}) - ${escapeHtml(h.reason)}`;
+                    div.innerHTML = `
+                        <div class="history-main">
+                            <span>${resultLine}</span>
+                            <span class="history-date">📅 ${dateStr}</span>
+                        </div>
+                        <span class="history-duration">⏱️ ${formatDuration(h.durationSec || 0)}</span>
+                    `;
+                    histEl.appendChild(div);
+                });
+            });
+        }
+
+        function sendLobbyChat() {
+            const input = document.getElementById('lobbyChatInput');
+            const text = input.value.trim();
+            if (!text || !currentGameId) return;
+            db.ref(`${getGameBasePath(currentGameId)}/lobbyChat`).push({
+                name: myNickname, text: text, time: firebase.database.ServerValue.TIMESTAMP
+            });
+            input.value = '';
+        }
+
+        function createRoom() {
+            if (!currentGameId) return;
+            const basePath = getGameBasePath(currentGameId);
+            const newRoomId = 'room_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4);
+            currentRoomId = newRoomId;
+            myRole = 'host';
+
+            const now = Date.now();
+            const initialBoard = getInitialBoardForGame(currentGameId);
+
+            const initialRoomData = {
+                roomId: newRoomId,
+                gameType: currentGameId,
+                status: 'waiting',
+                lastActive: now,
+                host: { id: myId, name: myNickname, ready: false, undoLeft: 1, wins: 0, score: 0 },
+                guest: null,
+                turn: 1,
+                turnStartTime: now,
+                remainingWhenPaused: 60,
+                isPaused: false,
+                pausedBy: "",
+                gameStartTime: 0,
+                boardState: initialBoard,
+                activeShot: null,
+                lastMoveInfo: null,
+                prevSnapshot: null,
+                moves: [],
+                winner: 0,
+                winReason: ""
+            };
+
+            roomRef = db.ref(`${basePath}/rooms/${newRoomId}`);
+            roomRef.set(initialRoomData).then(() => {
+                roomRef.onDisconnect().remove();
+                enterRoomView(newRoomId);
+            }).catch(err => alert('방 생성 오류: ' + err.message));
+        }
+
+        function joinRoom(rId) {
+            if (!currentGameId) return;
+            const targetRef = db.ref(`${getGameBasePath(currentGameId)}/rooms/${rId}`);
+
+            targetRef.transaction(r => {
+                if (!r) return;
+                if (!r.host || r.guest || r.status === 'playing') {
+                    return;
+                }
+                r.guest = { id: myId, name: myNickname, ready: false, undoLeft: 1, wins: 0, score: 0 };
+                r.status = 'full';
+                return r;
+            }, (error, committed, snapshot) => {
+                if (error) {
+                    alert('방 참여 중 오류가 발생했습니다: ' + error.message);
+                    return;
+                }
+                if (!committed) {
+                    alert('이미 참여했거나 사라진 방입니다.');
+                    return;
+                }
+
+                currentRoomId = rId;
+                myRole = 'guest';
+                roomRef = targetRef;
+                roomRef.child('guest').onDisconnect().remove();
+                enterRoomView(rId);
+                pushRoomSystemChat(`${myNickname}님이 방에 입장했습니다.`);
+            });
+        }
+
+        function enterRoomView(rId) {
+            showScreen('roomScreen');
+            document.getElementById('roomChatBox').innerHTML = '';
+            lastKnownGuestName = "";
+            isFinishingMatch = false;
+            const basePath = getGameBasePath(currentGameId);
+
+            // 게임별 역할 라벨 & 보드 스타일 설정
+            const hostRoleEl = document.getElementById('hostRoleDisplay');
+            const guestRoleEl = document.getElementById('guestRoleDisplay');
+            const containerBox = document.getElementById('boardContainerBox');
+            const guideEl = document.getElementById('boardGuideText');
+
+            if (currentGameId === 'omok') {
+                hostRoleEl.innerText = '⚫ 흑돌 (선공/방장)';
+                guestRoleEl.innerText = '⚪ 백돌 (후공/참여자)';
+                containerBox.style.background = '#dcb35c';
+                canvas.style.background = '#dcb35c';
+                canvas.style.borderRadius = '8px';
+                canvas.width = 420; canvas.height = 420;
+                guideEl.style.display = 'none';
+            } else if (currentGameId === 'abalone') {
+                hostRoleEl.innerText = '⚫ 흑돌 (선공/방장)';
+                guestRoleEl.innerText = '⚪ 백돌 (후공/참여자)';
+                containerBox.style.background = '#bfe0f8';
+                canvas.style.background = '#dceefb';
+                canvas.style.borderRadius = '50%';
+                canvas.width = 540; canvas.height = 540;
+                guideEl.style.display = 'none';
+            } else if (currentGameId === 'janggi') {
+                hostRoleEl.innerText = '🟢 초(楚) (선공/방장)';
+                guestRoleEl.innerText = '🔴 한(漢) (후공/참여자)';
+                containerBox.style.background = '#6d4c2f';
+                canvas.style.background = '#d4a359';
+                canvas.style.borderRadius = '4px';
+                canvas.width = JK_BOARD_W; canvas.height = JK_BOARD_H;
+                guideEl.style.display = 'block';
+                guideEl.innerText = myRole === 'guest'
+                    ? '아래쪽 내 기물(漢)을 터치 후 뒤로 당겨 원 크기·화살표 길이(파워)와 각도를 조절하세요.'
+                    : '아래쪽 내 기물(楚)을 터치 후 뒤로 당겨 원 크기·화살표 길이(파워)와 각도를 조절하세요.';
+
+                jk_pieces = deserializeJanggiPieces(getDefaultJanggiBoard());
+                jk_isMoving = false;
+                jk_isMyShot = false;
+                jk_selectedPiece = null;
+                jk_lastProcessedShotId = 0;
+                jk_pendingPrevSnapshot = null;
+                startJanggiLoop();
+            }
+
+            // 방장 하트비트 시작 (15초마다 생존 신호 갱신)
+            if (heartbeatInterval) clearInterval(heartbeatInterval);
+            if (myRole === 'host') {
+                heartbeatInterval = setInterval(() => {
+                    if (roomRef) roomRef.child('lastActive').set(Date.now());
+                }, 15000);
+            }
+
+            roomRef.on('value', snapshot => {
+                const data = snapshot.val();
+                if (!data) {
+                    alert('방장이 퇴장하여 방이 종료되었습니다.');
+                    cleanupRoomAndReturn();
+                    return;
+                }
+
+                if (data.guest && data.guest.name) {
+                    lastKnownGuestName = data.guest.name;
+                }
+
+                if (myRole === 'guest' && (!data.guest || data.guest.id !== myId)) {
+                    alert('방장에 의해 방에서 내보내졌습니다.');
+                    cleanupRoomAndReturn();
+                    return;
+                }
+
+                if (myRole === 'host' && !data.guest && data.status !== 'waiting') {
+                    if (data.status === 'playing' && lastKnownGuestName && !isFinishingMatch) {
+                        isFinishingMatch = true;
+                        const durationSec = recordMatchHistory(data.host.name, lastKnownGuestName, '상대 연결 끊김(기권승)', data.gameStartTime, false);
+                        pushRoomSystemChat(`🏆 [${data.host.name}] 기권승! (${lastKnownGuestName}님 연결 끊김, 소요시간: ${formatDuration(durationSec)})`);
+                        const hostWins = (data.host.wins || 0) + 1;
+                        lastKnownGuestName = "";
+                        roomRef.update({
+                            status: 'waiting',
+                            lastActive: Date.now(),
+                            'host/ready': false,
+                            'host/wins': hostWins,
+                            isPaused: false,
+                            winner: 1,
+                            winReason: '기권승',
+                            moves: [],
+                            activeShot: null,
+                            lastMoveInfo: null,
+                            prevSnapshot: null,
+                            boardState: getInitialBoardForGame(currentGameId)
+                        });
+                        return;
+                    }
+
+                    roomRef.update({
+                        status: 'waiting',
+                        lastActive: Date.now(),
+                        'host/ready': false,
+                        isPaused: false,
+                        winner: 0,
+                        moves: [],
+                        activeShot: null,
+                        lastMoveInfo: null,
+                        prevSnapshot: null,
+                        boardState: getInitialBoardForGame(currentGameId)
+                    });
+                    return;
+                }
+
+                currentRoomData = data;
+                if (data.status === 'playing') {
+                    isFinishingMatch = false;
+                }
+                renderRoomState(data);
+
+                if (myRole === 'host' && data.status === 'full' && data.host && data.guest) {
+                    if (data.host.ready && data.guest.ready) {
+                        startNewMatchInRoom();
+                    }
+                }
+            });
+
+            roomChatRef = db.ref(`${basePath}/roomChats/${rId}`);
+            if (myRole === 'host') roomChatRef.onDisconnect().remove();
+            roomChatRef.limitToLast(40).on('value', snapshot => {
+                const box = document.getElementById('roomChatBox');
+                box.innerHTML = '';
+                snapshot.forEach(c => {
+                    const m = c.val();
+                    const div = document.createElement('div');
+                    div.className = 'chat-msg ' + (m.system ? 'system' : '');
+                    div.innerHTML = m.system ? escapeHtml(m.text) : `<b>${escapeHtml(m.name)}:</b> ${escapeHtml(m.text)}`;
+                    box.appendChild(div);
+                });
+                box.scrollTop = box.scrollHeight;
+            });
+
+            if (localTimerInterval) clearInterval(localTimerInterval);
+            localTimerInterval = setInterval(tickRoomTimer, 250);
+        }
+
+        function pushRoomSystemChat(msg) {
+            if (!currentRoomId || !currentGameId) return;
+            db.ref(`${getGameBasePath(currentGameId)}/roomChats/${currentRoomId}`).push({
+                system: true, text: msg, time: firebase.database.ServerValue.TIMESTAMP
+            });
+        }
+
+        function sendRoomChat() {
+            const input = document.getElementById('roomChatInput');
+            const text = input.value.trim();
+            if (!text || !currentRoomId || !currentGameId) return;
+            db.ref(`${getGameBasePath(currentGameId)}/roomChats/${currentRoomId}`).push({
+                name: myNickname, text: text, time: firebase.database.ServerValue.TIMESTAMP
+            });
+            input.value = '';
+        }
+
+        function toggleReady() {
+            if (!currentRoomData || currentRoomData.status === 'playing') return;
+            if (myRole === 'host') {
+                roomRef.child('host/ready').set(!currentRoomData.host.ready);
+            } else if (myRole === 'guest' && currentRoomData.guest) {
+                roomRef.child('guest/ready').set(!currentRoomData.guest.ready);
+            }
+        }
+
+        function kickGuest() {
+            if (myRole !== 'host' || !currentRoomData || !currentRoomData.guest) return;
+            if (currentRoomData.status === 'playing') { alert('게임 중에는 내보낼 수 없습니다.'); return; }
+            const kickedName = currentRoomData.guest.name;
+            roomRef.update({ guest: null, status: 'waiting', 'host/ready': false });
+            pushRoomSystemChat(`방장이 ${kickedName}님을 내보냈습니다.`);
+        }
+
+        function leaveRoom() {
+            if (!currentRoomData) return;
+            const myPlayerObj = myRole === 'host' ? currentRoomData.host : currentRoomData.guest;
+            if (currentRoomData.status !== 'playing' && myPlayerObj && myPlayerObj.ready) {
+                alert('준비 완료 상태에서는 퇴장할 수 없습니다. 먼저 [준비 취소]를 눌러주세요.'); return;
+            }
+
+            const isPlayingNow = currentRoomData.status === 'playing';
+            if (isPlayingNow && !confirm('게임 도중 나가시면 기권패 처리됩니다. 나가시겠습니까?')) return;
+
+            if (isPlayingNow && currentRoomData.host && currentRoomData.guest && !isFinishingMatch) {
+                isFinishingMatch = true;
+                const winnerName = myRole === 'host' ? currentRoomData.guest.name : currentRoomData.host.name;
+                const loserName = myRole === 'host' ? currentRoomData.host.name : currentRoomData.guest.name;
+                recordMatchHistory(winnerName, loserName, '기권승', currentRoomData.gameStartTime, false);
+            }
+
+            if (myRole === 'host') {
+                roomRef.onDisconnect().cancel();
+                if (roomChatRef) roomChatRef.remove();
+                roomRef.remove();
+            } else {
+                roomRef.child('guest').onDisconnect().cancel();
+                if (isPlayingNow) {
+                    const hostWins = (currentRoomData.host.wins || 0) + 1;
+                    pushRoomSystemChat(`🏆 [${currentRoomData.host.name}] 기권승! (${myNickname}님 퇴장)`);
+                    roomRef.update({
+                        guest: null,
+                        status: 'waiting',
+                        'host/ready': false,
+                        'host/wins': hostWins,
+                        isPaused: false,
+                        activeShot: null,
+                        winner: 1,
+                        winReason: '기권승'
+                    });
+                } else {
+                    pushRoomSystemChat(`${myNickname}님이 퇴장했습니다.`);
+                    roomRef.update({ guest: null, status: 'waiting', 'host/ready': false, isPaused: false, activeShot: null, winner: 0 });
+                }
+            }
+            cleanupRoomAndReturn();
+        }
+
+        function cleanupRoomAndReturn() {
+            if (roomRef) roomRef.off();
+            if (roomChatRef) roomChatRef.off();
+            if (localTimerInterval) clearInterval(localTimerInterval);
+            if (heartbeatInterval) clearInterval(heartbeatInterval);
+            if (av_animFrame) cancelAnimationFrame(av_animFrame);
+            if (jk_animFrame) cancelAnimationFrame(jk_animFrame);
+            roomRef = null; roomChatRef = null; currentRoomId = null; currentRoomData = null; myRole = null;
+            lastKnownGuestName = ""; isFinishingMatch = false;
+            jk_isMoving = false; jk_isMyShot = false; jk_selectedPiece = null; jk_lastProcessedShotId = 0; jk_pendingPrevSnapshot = null;
+            showScreen('lobbyScreen');
+        }
+
+        // ==========================================
+        // 승패 이력 저장 공통 함수
+        // ==========================================
+        function recordMatchHistory(winnerName, loserName, reason, startTime, isDraw = false) {
+            const durationSec = Math.max(1, Math.floor((Date.now() - (startTime || Date.now())) / 1000));
+            if (!currentGameId || !winnerName || !loserName) return durationSec;
+
+            db.ref(`${getGameBasePath(currentGameId)}/matchHistory`).push({
+                winner: winnerName,
+                loser: loserName,
+                reason: reason,
+                isDraw: !!isDraw,
+                durationSec: durationSec,
+                timestamp: Date.now()
+            }).catch(err => console.error('승패 기록 저장 실패:', err));
+
+            return durationSec;
+        }
+
+        // ==========================================
+        // 게임 시작 및 공통 조작 (무르기, 일시정지, 종료)
+        // ==========================================
+        function startNewMatchInRoom() {
+            const now = Date.now();
+            const initialBoard = getInitialBoardForGame(currentGameId);
+            av_selected = []; av_validMoves = [];
+            jk_isMoving = false; jk_isMyShot = false; jk_selectedPiece = null; jk_lastProcessedShotId = 0; jk_pendingPrevSnapshot = null;
+            isFinishingMatch = false;
+
+            roomRef.update({
+                status: 'playing',
+                lastActive: now,
+                turn: 1,
+                turnStartTime: now,
+                remainingWhenPaused: 60,
+                isPaused: false,
+                pausedBy: "",
+                gameStartTime: now,
+                boardState: initialBoard,
+                activeShot: null,
+                lastMoveInfo: null,
+                prevSnapshot: null,
+                moves: [],
+                winner: 0,
+                winReason: "",
+                'host/undoLeft': 1,
+                'guest/undoLeft': 1,
+                'host/score': 0,
+                'guest/score': 0
+            });
+            pushRoomSystemChat(`양쪽 모두 준비 완료! [${currentGameObj.title}] 대국이 시작되었습니다.`);
+        }
+
+        function useUndoCoupon() {
+            if (!currentRoomData || currentRoomData.status !== 'playing' || currentRoomData.isPaused) return;
+            const myTurnNum = myRole === 'host' ? 1 : 2;
+            const myPlayerObj = myRole === 'host' ? currentRoomData.host : currentRoomData.guest;
+            if (!myPlayerObj || myPlayerObj.undoLeft <= 0) {
+                alert('무르기 쿠폰을 이미 사용했습니다.'); return;
+            }
+            const undoPath = myRole === 'host' ? 'host/undoLeft' : 'guest/undoLeft';
+
+            if (currentGameId === 'omok') {
+                const moves = currentRoomData.moves ? [...currentRoomData.moves] : [];
+                if (moves.length === 0 || moves[moves.length - 1].p !== myTurnNum) {
+                    alert('무르기는 내가 방금 둔 직후(상대방이 두기 전)에만 사용할 수 있습니다!'); return;
+                }
+                moves.pop();
+                roomRef.update({
+                    moves: moves,
+                    turn: myTurnNum,
+                    turnStartTime: Date.now(),
+                    remainingWhenPaused: 60,
+                    [undoPath]: 0
+                });
+            } else if (currentGameId === 'abalone') {
+                const snap = currentRoomData.prevSnapshot;
+                if (!snap || snap.mover !== myTurnNum) {
+                    alert('무르기는 내가 방금 이동한 직후(상대방이 이동하기 전)에만 사용할 수 있습니다!'); return;
+                }
+                av_selected = []; av_validMoves = [];
+                roomRef.update({
+                    boardState: snap.boardState,
+                    'host/score': snap.hostScore,
+                    'guest/score': snap.guestScore,
+                    turn: myTurnNum,
+                    turnStartTime: Date.now(),
+                    remainingWhenPaused: 60,
+                    lastMoveInfo: null,
+                    prevSnapshot: null,
+                    [undoPath]: 0
+                });
+            } else if (currentGameId === 'janggi') {
+                if (jk_isMoving || currentRoomData.activeShot) {
+                    alert('기물이 멈춘 후에 무르기를 사용할 수 있습니다.'); return;
+                }
+                const snap = currentRoomData.prevSnapshot;
+                if (!snap || snap.mover !== myTurnNum || !snap.boardState) {
+                    alert('무르기는 내가 방금 튕긴 직후(상대방이 튕기기 전)에만 사용할 수 있습니다!'); return;
+                }
+                jk_selectedPiece = null;
+                roomRef.update({
+                    boardState: snap.boardState,
+                    turn: myTurnNum,
+                    turnStartTime: Date.now(),
+                    remainingWhenPaused: 60,
+                    activeShot: null,
+                    prevSnapshot: null,
+                    [undoPath]: 0
+                });
+            }
+            pushRoomSystemChat(`${myNickname}님이 [무르기 쿠폰]을 사용하여 방금 수를 되돌렸습니다.`);
+        }
+
+        function togglePauseGame() {
+            if (!currentRoomData || currentRoomData.status !== 'playing') return;
+            if (!currentRoomData.isPaused) {
+                const elapsed = Math.floor((Date.now() - currentRoomData.turnStartTime) / 1000);
+                const rem = Math.max(1, (currentRoomData.remainingWhenPaused || 60) - elapsed);
+                roomRef.update({ isPaused: true, pausedBy: myNickname, remainingWhenPaused: rem });
+                pushRoomSystemChat(`⏸️ ${myNickname}님이 일시정지했습니다.`);
+            } else {
+                roomRef.update({ isPaused: false, pausedBy: "", turnStartTime: Date.now() });
+                pushRoomSystemChat(`▶️ ${myNickname}님이 게임을 재개했습니다.`);
+            }
+        }
+
+        function finishGame(winnerNum, reason, extraData = {}) {
+            if (isFinishingMatch || !currentRoomData || currentRoomData.status !== 'playing') return;
+            isFinishingMatch = true;
+
+            const hostName = currentRoomData.host ? currentRoomData.host.name : '방장';
+            const guestName = currentRoomData.guest ? currentRoomData.guest.name : (lastKnownGuestName || '상대방');
+
+            const hostWins = (currentRoomData.host.wins || 0) + (winnerNum === 1 ? 1 : 0);
+            const guestWins = (currentRoomData.guest ? (currentRoomData.guest.wins || 0) : 0) + (winnerNum === 2 ? 1 : 0);
+
+            const updates = {
+                status: 'full',
+                winner: winnerNum,
+                winReason: reason,
+                isPaused: false,
+                activeShot: null,
+                'host/ready': false,
+                'guest/ready': false,
+                'host/wins': hostWins,
+                'guest/wins': guestWins,
+                ...extraData
+            };
+
+            roomRef.update(updates).catch(err => console.error('방 상태 업데이트 오류:', err));
+
+            if ((winnerNum === 1 || winnerNum === 2) && currentGameId) {
+                const winnerName = winnerNum === 1 ? hostName : guestName;
+                const loserName = winnerNum === 1 ? guestName : hostName;
+                const durationSec = recordMatchHistory(winnerName, loserName, reason, currentRoomData.gameStartTime, false);
+                pushRoomSystemChat(`🏆 [${winnerName}] 승리! (${reason}, 소요시간: ${formatDuration(durationSec)})`);
+            } else if (winnerNum === 3 && currentGameId) {
+                const durationSec = recordMatchHistory(hostName, guestName, reason, currentRoomData.gameStartTime, true);
+                pushRoomSystemChat(`🤝 무승부! (${reason}, 소요시간: ${formatDuration(durationSec)})`);
+            }
+        }
+
+        function tickRoomTimer() {
+            if (!currentRoomData || currentRoomData.status !== 'playing') {
+                document.getElementById('hostTimerDisplay').innerText = '01:00';
+                document.getElementById('guestTimerDisplay').innerText = '01:00';
+                return;
+            }
+
+            // 장기 알까기 기물이 움직이는 중에는 시간 초과 판정 보류
+            const isShotInProgress = currentGameId === 'janggi' && (jk_isMoving || !!currentRoomData.activeShot);
+
+            let remSec = currentRoomData.remainingWhenPaused || 60;
+            if (!currentRoomData.isPaused && !isShotInProgress) {
+                const elapsed = Math.floor((Date.now() - currentRoomData.turnStartTime) / 1000);
+                remSec = Math.max(0, remSec - elapsed);
+            } else if (isShotInProgress) {
+                const elapsed = Math.floor((Date.now() - currentRoomData.turnStartTime) / 1000);
+                remSec = Math.max(1, remSec - elapsed);
+            }
+
+            const formatted = `00:${String(remSec).padStart(2, '0')}`;
+            if (currentRoomData.turn === 1) {
+                document.getElementById('hostTimerDisplay').innerText = remSec === 60 ? '01:00' : formatted;
+                document.getElementById('guestTimerDisplay').innerText = '01:00';
+            } else {
+                document.getElementById('guestTimerDisplay').innerText = remSec === 60 ? '01:00' : formatted;
+                document.getElementById('hostTimerDisplay').innerText = '01:00';
+            }
+
+            if (remSec <= 0 && !currentRoomData.isPaused && !isShotInProgress && myRole === 'host' && !isFinishingMatch) {
+                const timeoutWinner = currentRoomData.turn === 1 ? 2 : 1;
+                if (currentGameId === 'omok') {
+                    finishGame(timeoutWinner, '시간 초과', { moves: currentRoomData.moves || [] });
+                } else {
+                    finishGame(timeoutWinner, '시간 초과', { boardState: currentRoomData.boardState });
+                }
+            }
+        }
+
+        // ==========================================
+        // 캔버스 통합 입력 처리
+        // ==========================================
+        canvas.addEventListener('pointerdown', e => {
+            e.preventDefault();
+            if (!currentRoomData || currentRoomData.status !== 'playing' || currentRoomData.isPaused) return;
+
+            const myTurnNum = myRole === 'host' ? 1 : 2;
+            if (currentRoomData.turn !== myTurnNum) return;
+
+            if (currentGameId === 'omok') {
+                handleOmokClick(e);
+            } else if (currentGameId === 'abalone') {
+                handleAbaloneClick(e);
+            } else if (currentGameId === 'janggi') {
+                handleJanggiStart(e);
+            }
+        });
+
+        window.addEventListener('pointermove', e => {
+            if (currentGameId === 'janggi' && jk_selectedPiece) {
+                e.preventDefault();
+                handleJanggiMove(e);
+            }
+        }, { passive: false });
+
+        window.addEventListener('pointerup', e => {
+            if (currentGameId === 'janggi' && jk_selectedPiece) {
+                e.preventDefault();
+                handleJanggiEnd(e);
+            }
+        });
+
+        window.addEventListener('pointercancel', () => {
+            if (currentGameId === 'janggi' && jk_selectedPiece) {
+                jk_selectedPiece = null;
+            }
+        });
+
+        // ==========================================
+        // [게임 1] 오목 로직
+        // ==========================================
+        function handleOmokClick(e) {
+            const rect = canvas.getBoundingClientRect();
+            const col = Math.floor((e.clientX - rect.left) / (rect.width / OMOK_SIZE));
+            const row = Math.floor((e.clientY - rect.top) / (rect.height / OMOK_SIZE));
+
+            if (row < 0 || row >= OMOK_SIZE || col < 0 || col >= OMOK_SIZE) return;
+
+            let board = Array(OMOK_SIZE).fill(null).map(() => Array(OMOK_SIZE).fill(0));
+            if (currentRoomData.moves) {
+                currentRoomData.moves.forEach(m => board[m.r][m.c] = m.p);
+            }
+
+            if (board[row][col] !== 0) return;
+
+            const myTurnNum = myRole === 'host' ? 1 : 2;
+            const moves = currentRoomData.moves ? [...currentRoomData.moves] : [];
+            moves.push({ r: row, c: col, p: myTurnNum });
+
+            board[row][col] = myTurnNum;
+            const isWin = checkOmokWin(row, col, myTurnNum, board);
+
+            if (isWin) {
+                finishGame(myTurnNum, '오목 완성', { moves: moves });
+            } else if (moves.length >= OMOK_SIZE * OMOK_SIZE) {
+                finishGame(3, '무승부', { moves: moves });
+            } else {
+                const nextTurn = myTurnNum === 1 ? 2 : 1;
+                roomRef.update({
+                    moves: moves,
+                    turn: nextTurn,
+                    turnStartTime: Date.now(),
+                    remainingWhenPaused: 60
+                });
+            }
+        }
+
+        function checkOmokWin(r, c, player, board) {
+            const dirs = [{dr:0, dc:1}, {dr:1, dc:0}, {dr:1, dc:1}, {dr:1, dc:-1}];
+            for (let {dr, dc} of dirs) {
+                let cnt = 1;
+                let i = 1;
+                while (r+dr*i >= 0 && r+dr*i < OMOK_SIZE && c+dc*i >= 0 && c+dc*i < OMOK_SIZE && board[r+dr*i][c+dc*i] === player) { cnt++; i++; }
+                i = 1;
+                while (r-dr*i >= 0 && r-dr*i < OMOK_SIZE && c-dc*i >= 0 && c-dc*i < OMOK_SIZE && board[r-dr*i][c-dc*i] === player) { cnt++; i++; }
+                if (cnt >= 5) return true;
+            }
+            return false;
+        }
+
+        // ==========================================
+        // [게임 2] 아발론 로직
+        // ==========================================
+        function getDefaultAbaloneBoard() {
+            const obj = {};
+            for (let q = -4; q <= 4; q++) {
+                for (let r = -4; r <= 4; r++) {
+                    if (Math.abs(q) <= 4 && Math.abs(r) <= 4 && Math.abs(q + r) <= 4) {
+                        obj[`${q},${r}`] = 0;
+                    }
+                }
+            }
+            for (let q = 0; q <= 4; q++) obj[`${q},-4`] = 2;
+            for (let q = -1; q <= 4; q++) obj[`${q},-3`] = 2;
+            for (let q = 0; q <= 2
