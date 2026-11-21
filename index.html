@@ -37,7 +37,8 @@
             box-shadow: 0 4px 12px rgba(0,0,0,0.06);
         }
         h2 { font-size: 1.25rem; margin-bottom: 10px; color: #1a252f; display: flex; justify-content: space-between; align-items: center; }
-        h3 { font-size: 1rem; margin-bottom: 8px; color: #34495e; }
+        h3 { font-size: 1rem; margin-bottom: 8px; color: #34495e; display: flex; justify-content: space-between; align-items: center; gap: 6px; flex-wrap: wrap; }
+        .reset-note { font-size: 0.72rem; font-weight: normal; color: #95a5a6; }
 
         /* 게임 선택 그리드 */
         .game-grid {
@@ -224,7 +225,10 @@
         </div>
 
         <div class="card">
-            <h3>💬 <span id="lobbyChatTitle">대기실</span> 대기실 채팅</h3>
+            <h3>
+                <span>💬 <span id="lobbyChatTitle">대기실</span> 대기실 채팅</span>
+                <span class="reset-note">매주 월요일 00:00 초기화</span>
+            </h3>
             <div id="lobbyChatBox" class="chat-box"></div>
             <div class="chat-input-row">
                 <input type="text" id="lobbyChatInput" class="input-box" placeholder="대기실에 메시지 입력..." maxlength="100" onkeypress="if(event.key==='Enter') sendLobbyChat()">
@@ -233,9 +237,12 @@
         </div>
 
         <div class="card">
-            <h3>🏆 최근 승패 이력 & 소요 시간</h3>
+            <h3>
+                <span>🏆 최근 승패 이력 & 소요 시간</span>
+                <span class="reset-note">매주 월요일 00:00 초기화</span>
+            </h3>
             <div id="matchHistoryList" class="history-list" style="max-height: 180px; min-height: 80px;">
-                <p style="text-align: center; color: #888; margin-top: 20px;">아직 기록된 대국이 없습니다.</p>
+                <p style="text-align: center; color: #888; margin-top: 20px;">이번 주 기록된 대국이 없습니다.</p>
             </div>
         </div>
     </div>
@@ -291,7 +298,10 @@
         </div>
 
         <div class="card" style="padding: 12px 16px;">
-            <h3>💬 방 대화창</h3>
+            <h3>
+                <span>💬 방 대화창</span>
+                <span class="reset-note">매주 월요일 00:00 초기화</span>
+            </h3>
             <div id="roomChatBox" class="chat-box" style="height: 100px;"></div>
             <div class="chat-input-row">
                 <input type="text" id="roomChatInput" class="input-box" placeholder="상대방에게 메시지 입력..." maxlength="100" onkeypress="if(event.key==='Enter') sendRoomChat()">
@@ -354,6 +364,7 @@
         let currentRoomData = null;
         let lastKnownGuestName = "";
         let isFinishingMatch = false;
+        let lastSavedMatchId = "";
 
         let lobbyRoomsRef = null;
         let lobbyChatRef = null;
@@ -378,7 +389,7 @@
         let av_validMoves = [];
         let av_animFrame = null;
 
-        // 장기 알까기 전용 변수 (밸런스 스펙 유지)
+        // 장기 알까기 전용 변수
         const JK_BOARD_W = 540;
         const JK_BOARD_H = 600;
         const JK_FRICTION = 0.978;
@@ -400,6 +411,129 @@
         let jk_animFrame = null;
         let jk_lastFrameTime = 0;
         let jk_accumulator = 0;
+
+        // ==========================================
+        // 2. 매주 월요일 00:00(KST) 주간 초기화 엔진
+        // ==========================================
+        function getCurrentKstWeekInfo(nowMs = Date.now()) {
+            const KST_OFFSET = 9 * 60 * 60 * 1000;
+            const kstDate = new Date(nowMs + KST_OFFSET);
+            const day = kstDate.getUTCDay(); // 0=일, 1=월, ..., 6=토
+            const diffToMonday = (day === 0 ? 6 : day - 1);
+            const mondayUtc = Date.UTC(
+                kstDate.getUTCFullYear(),
+                kstDate.getUTCMonth(),
+                kstDate.getUTCDate() - diffToMonday,
+                0, 0, 0, 0
+            );
+            const weekStartTs = mondayUtc - KST_OFFSET;
+            const monDate = new Date(mondayUtc);
+            const yyyy = monDate.getUTCFullYear();
+            const mm = String(monDate.getUTCMonth() + 1).padStart(2, '0');
+            const dd = String(monDate.getUTCDate()).padStart(2, '0');
+            return {
+                weekKey: `${yyyy}-${mm}-${dd}`,
+                weekStartTs: weekStartTs
+            };
+        }
+
+        let lastKnownWeekKey = getCurrentKstWeekInfo().weekKey;
+
+        async function purgeExpiredRecordsBefore(basePath, weekStartTs) {
+            try {
+                // 1) 지난 주 승부이력 삭제
+                const histSnap = await db.ref(`${basePath}/matchHistory`).once('value');
+                if (histSnap.exists()) {
+                    const histUpdates = {};
+                    histSnap.forEach(child => {
+                        const v = child.val();
+                        const ts = (v && typeof v === 'object') ? (Number(v.timestamp) || 0) : 0;
+                        if (ts < weekStartTs) {
+                            histUpdates[child.key] = null;
+                        }
+                    });
+                    if (Object.keys(histUpdates).length > 0) {
+                        await db.ref(`${basePath}/matchHistory`).update(histUpdates);
+                    }
+                }
+
+                // 2) 지난 주 대기실 대화 삭제
+                const lobbyChatSnap = await db.ref(`${basePath}/lobbyChat`).once('value');
+                if (lobbyChatSnap.exists()) {
+                    const chatUpdates = {};
+                    lobbyChatSnap.forEach(child => {
+                        const v = child.val();
+                        const ts = (v && typeof v === 'object') ? (Number(v.time) || 0) : 0;
+                        if (ts < weekStartTs) {
+                            chatUpdates[child.key] = null;
+                        }
+                    });
+                    if (Object.keys(chatUpdates).length > 0) {
+                        await db.ref(`${basePath}/lobbyChat`).update(chatUpdates);
+                    }
+                }
+
+                // 3) 지난 주 방 대화창 삭제
+                const roomChatsSnap = await db.ref(`${basePath}/roomChats`).once('value');
+                if (roomChatsSnap.exists()) {
+                    const roomChatUpdates = {};
+                    roomChatsSnap.forEach(roomNode => {
+                        const rId = roomNode.key;
+                        roomNode.forEach(msgNode => {
+                            const v = msgNode.val();
+                            const ts = (v && typeof v === 'object') ? (Number(v.time) || 0) : 0;
+                            if (ts < weekStartTs) {
+                                roomChatUpdates[`${rId}/${msgNode.key}`] = null;
+                            }
+                        });
+                    });
+                    if (Object.keys(roomChatUpdates).length > 0) {
+                        await db.ref(`${basePath}/roomChats`).update(roomChatUpdates);
+                    }
+                }
+            } catch (err) {
+                console.error('주간 초기화 정리 오류:', err);
+            }
+        }
+
+        function checkAndRunWeeklyReset(gameId) {
+            if (!gameId) return;
+            const basePath = getGameBasePath(gameId);
+            const { weekKey, weekStartTs } = getCurrentKstWeekInfo();
+            lastKnownWeekKey = weekKey;
+
+            const resetMetaRef = db.ref(`${basePath}/meta/lastResetWeek`);
+            resetMetaRef.transaction(savedWeek => {
+                if (savedWeek === weekKey) {
+                    return; // 이번 주 이미 초기화 완료
+                }
+                return weekKey;
+            }, (error, committed) => {
+                if (error) {
+                    console.error('주간 초기화 상태 확인 실패:', error);
+                    return;
+                }
+                if (committed) {
+                    purgeExpiredRecordsBefore(basePath, weekStartTs);
+                }
+            });
+        }
+
+        // 접속 유지 상태에서 월요일 00:00(KST)이 지나면 즉시 자동 초기화
+        setInterval(() => {
+            const { weekKey } = getCurrentKstWeekInfo();
+            if (weekKey !== lastKnownWeekKey) {
+                lastKnownWeekKey = weekKey;
+                if (currentGameId) {
+                    checkAndRunWeeklyReset(currentGameId);
+                    if (!currentRoomId) {
+                        attachLobbyListeners(currentGameId);
+                    } else {
+                        document.getElementById('roomChatBox').innerHTML = '';
+                    }
+                }
+            }
+        }, 30000);
 
         // 페이지 로드 시 저장된 닉네임 오토필
         window.addEventListener('DOMContentLoaded', () => {
@@ -479,6 +613,10 @@
 
         function getGameBasePath(gameId) { return `games/${gameId}`; }
 
+        function makeMatchId(now = Date.now()) {
+            return `${now}_${Math.random().toString(36).substr(2, 5)}`;
+        }
+
         function getInitialBoardForGame(gameId) {
             if (gameId === 'omok') return null;
             if (gameId === 'abalone') return getDefaultAbaloneBoard();
@@ -494,6 +632,8 @@
 
         function attachLobbyListeners(gameId) {
             detachLobbyListeners();
+            checkAndRunWeeklyReset(gameId);
+
             const basePath = getGameBasePath(gameId);
 
             lobbyRoomsRef = db.ref(`${basePath}/rooms`);
@@ -556,8 +696,12 @@
             lobbyChatRef.on('value', snapshot => {
                 const chatBox = document.getElementById('lobbyChatBox');
                 chatBox.innerHTML = '';
+                const { weekStartTs } = getCurrentKstWeekInfo();
                 snapshot.forEach(child => {
                     const m = child.val();
+                    if (!m || typeof m !== 'object') return;
+                    const msgTs = Number(m.time) || 0;
+                    if (msgTs < weekStartTs) return;
                     const div = document.createElement('div');
                     div.className = 'chat-msg';
                     div.innerHTML = `<b>${escapeHtml(m.name)}:</b> ${escapeHtml(m.text)}`;
@@ -566,17 +710,31 @@
                 chatBox.scrollTop = chatBox.scrollHeight;
             });
 
-            matchHistoryRef = db.ref(`${basePath}/matchHistory`).limitToLast(20);
+            matchHistoryRef = db.ref(`${basePath}/matchHistory`).limitToLast(30);
             matchHistoryRef.on('value', snapshot => {
                 const histEl = document.getElementById('matchHistoryList');
                 histEl.innerHTML = '';
                 if (!snapshot.exists()) {
-                    histEl.innerHTML = '<p style="text-align: center; color: #888; margin-top: 20px;">아직 기록된 대국이 없습니다.</p>';
+                    histEl.innerHTML = '<p style="text-align: center; color: #888; margin-top: 20px;">이번 주 기록된 대국이 없습니다.</p>';
                     return;
                 }
+                const { weekStartTs } = getCurrentKstWeekInfo();
                 const items = [];
-                snapshot.forEach(child => items.push(child.val()));
-                items.reverse().forEach(h => {
+                snapshot.forEach(child => {
+                    const h = child.val();
+                    if (!h || typeof h !== 'object') return;
+                    const ts = Number(h.timestamp) || 0;
+                    if (ts < weekStartTs) return;
+                    items.push(h);
+                });
+
+                if (items.length === 0) {
+                    histEl.innerHTML = '<p style="text-align: center; color: #888; margin-top: 20px;">이번 주 기록된 대국이 없습니다.</p>';
+                    return;
+                }
+
+                items.sort((a, b) => (Number(b.timestamp) || 0) - (Number(a.timestamp) || 0));
+                items.forEach(h => {
                     const div = document.createElement('div');
                     div.className = 'history-item';
                     const dateStr = formatMatchDate(h.timestamp);
@@ -592,6 +750,10 @@
                     `;
                     histEl.appendChild(div);
                 });
+            }, err => {
+                console.error('승패 이력 조회 실패:', err);
+                const histEl = document.getElementById('matchHistoryList');
+                histEl.innerHTML = `<p style="text-align: center; color: #e74c3c; margin-top: 20px;">승패 이력 조회 오류: ${escapeHtml(err.code || err.message)}</p>`;
             });
         }
 
@@ -600,8 +762,8 @@
             const text = input.value.trim();
             if (!text || !currentGameId) return;
             db.ref(`${getGameBasePath(currentGameId)}/lobbyChat`).push({
-                name: myNickname, text: text, time: firebase.database.ServerValue.TIMESTAMP
-            });
+                name: myNickname, text: text, time: Date.now()
+            }).catch(err => console.error('대기실 채팅 전송 실패:', err));
             input.value = '';
         }
 
@@ -628,6 +790,8 @@
                 isPaused: false,
                 pausedBy: "",
                 gameStartTime: 0,
+                currentMatchId: "",
+                lastMatchRecord: null,
                 boardState: initialBoard,
                 activeShot: null,
                 lastMoveInfo: null,
@@ -680,6 +844,7 @@
             document.getElementById('roomChatBox').innerHTML = '';
             lastKnownGuestName = "";
             isFinishingMatch = false;
+            lastSavedMatchId = "";
             const basePath = getGameBasePath(currentGameId);
 
             // 게임별 역할 라벨 & 보드 스타일 설정
@@ -736,6 +901,16 @@
             roomRef.on('value', snapshot => {
                 const data = snapshot.val();
                 if (!data) {
+                    // 게임 도중 방장이 강제 종료/퇴장했을 때 참여자 측에서 기권승 보완 저장
+                    if (myRole === 'guest' && currentRoomData && currentRoomData.status === 'playing' && !isFinishingMatch) {
+                        isFinishingMatch = true;
+                        const matchId = currentRoomData.currentMatchId || makeMatchId(currentRoomData.gameStartTime || Date.now());
+                        if (matchId !== lastSavedMatchId) {
+                            lastSavedMatchId = matchId;
+                            const hostName = currentRoomData.host ? currentRoomData.host.name : '방장';
+                            recordMatchHistory(matchId, myNickname, hostName, '기권승', currentRoomData.gameStartTime, false);
+                        }
+                    }
                     alert('방장이 퇴장하여 방이 종료되었습니다.');
                     cleanupRoomAndReturn();
                     return;
@@ -743,6 +918,16 @@
 
                 if (data.guest && data.guest.name) {
                     lastKnownGuestName = data.guest.name;
+                }
+
+                // 상대 클라이언트가 기록한 대국 결과를 matchId 기준으로 1회 백업 저장(중복 없음)
+                if (data.lastMatchRecord && data.lastMatchRecord.matchId && data.lastMatchRecord.matchId !== lastSavedMatchId) {
+                    lastSavedMatchId = data.lastMatchRecord.matchId;
+                    if (currentGameId) {
+                        db.ref(`${getGameBasePath(currentGameId)}/matchHistory/${data.lastMatchRecord.matchId}`)
+                            .set(data.lastMatchRecord)
+                            .catch(err => console.error('승패 기록 백업 저장 실패:', err));
+                    }
                 }
 
                 if (myRole === 'guest' && (!data.guest || data.guest.id !== myId)) {
@@ -754,13 +939,17 @@
                 if (myRole === 'host' && !data.guest && data.status !== 'waiting') {
                     if (data.status === 'playing' && lastKnownGuestName && !isFinishingMatch) {
                         isFinishingMatch = true;
-                        const durationSec = recordMatchHistory(data.host.name, lastKnownGuestName, '상대 연결 끊김(기권승)', data.gameStartTime, false);
+                        const matchId = data.currentMatchId || makeMatchId(data.gameStartTime || Date.now());
+                        lastSavedMatchId = matchId;
+                        const now = Date.now();
+                        const durationSec = Math.max(1, Math.floor((now - (data.gameStartTime || now)) / 1000));
+                        recordMatchHistory(matchId, data.host.name, lastKnownGuestName, '상대 연결 끊김(기권승)', data.gameStartTime, false);
                         pushRoomSystemChat(`🏆 [${data.host.name}] 기권승! (${lastKnownGuestName}님 연결 끊김, 소요시간: ${formatDuration(durationSec)})`);
                         const hostWins = (data.host.wins || 0) + 1;
                         lastKnownGuestName = "";
                         roomRef.update({
                             status: 'waiting',
-                            lastActive: Date.now(),
+                            lastActive: now,
                             'host/ready': false,
                             'host/wins': hostWins,
                             isPaused: false,
@@ -808,8 +997,12 @@
             roomChatRef.limitToLast(40).on('value', snapshot => {
                 const box = document.getElementById('roomChatBox');
                 box.innerHTML = '';
+                const { weekStartTs } = getCurrentKstWeekInfo();
                 snapshot.forEach(c => {
                     const m = c.val();
+                    if (!m || typeof m !== 'object') return;
+                    const msgTs = Number(m.time) || 0;
+                    if (msgTs < weekStartTs) return;
                     const div = document.createElement('div');
                     div.className = 'chat-msg ' + (m.system ? 'system' : '');
                     div.innerHTML = m.system ? escapeHtml(m.text) : `<b>${escapeHtml(m.name)}:</b> ${escapeHtml(m.text)}`;
@@ -825,8 +1018,8 @@
         function pushRoomSystemChat(msg) {
             if (!currentRoomId || !currentGameId) return;
             db.ref(`${getGameBasePath(currentGameId)}/roomChats/${currentRoomId}`).push({
-                system: true, text: msg, time: firebase.database.ServerValue.TIMESTAMP
-            });
+                system: true, text: msg, time: Date.now()
+            }).catch(() => {});
         }
 
         function sendRoomChat() {
@@ -834,8 +1027,8 @@
             const text = input.value.trim();
             if (!text || !currentRoomId || !currentGameId) return;
             db.ref(`${getGameBasePath(currentGameId)}/roomChats/${currentRoomId}`).push({
-                name: myNickname, text: text, time: firebase.database.ServerValue.TIMESTAMP
-            });
+                name: myNickname, text: text, time: Date.now()
+            }).catch(err => console.error('방 채팅 전송 실패:', err));
             input.value = '';
         }
 
@@ -856,7 +1049,7 @@
             pushRoomSystemChat(`방장이 ${kickedName}님을 내보냈습니다.`);
         }
 
-        function leaveRoom() {
+        async function leaveRoom() {
             if (!currentRoomData) return;
             const myPlayerObj = myRole === 'host' ? currentRoomData.host : currentRoomData.guest;
             if (currentRoomData.status !== 'playing' && myPlayerObj && myPlayerObj.ready) {
@@ -866,23 +1059,27 @@
             const isPlayingNow = currentRoomData.status === 'playing';
             if (isPlayingNow && !confirm('게임 도중 나가시면 기권패 처리됩니다. 나가시겠습니까?')) return;
 
-            if (isPlayingNow && currentRoomData.host && currentRoomData.guest && !isFinishingMatch) {
+            const snapRoom = currentRoomData;
+
+            if (isPlayingNow && snapRoom.host && snapRoom.guest && !isFinishingMatch) {
                 isFinishingMatch = true;
-                const winnerName = myRole === 'host' ? currentRoomData.guest.name : currentRoomData.host.name;
-                const loserName = myRole === 'host' ? currentRoomData.host.name : currentRoomData.guest.name;
-                recordMatchHistory(winnerName, loserName, '기권승', currentRoomData.gameStartTime, false);
+                const matchId = snapRoom.currentMatchId || makeMatchId(snapRoom.gameStartTime || Date.now());
+                const winnerName = myRole === 'host' ? snapRoom.guest.name : snapRoom.host.name;
+                const loserName = myRole === 'host' ? snapRoom.host.name : snapRoom.guest.name;
+                lastSavedMatchId = matchId;
+                await recordMatchHistory(matchId, winnerName, loserName, '기권승', snapRoom.gameStartTime, false);
             }
 
             if (myRole === 'host') {
                 roomRef.onDisconnect().cancel();
-                if (roomChatRef) roomChatRef.remove();
-                roomRef.remove();
+                if (roomChatRef) await roomChatRef.remove().catch(() => {});
+                await roomRef.remove().catch(() => {});
             } else {
                 roomRef.child('guest').onDisconnect().cancel();
                 if (isPlayingNow) {
-                    const hostWins = (currentRoomData.host.wins || 0) + 1;
-                    pushRoomSystemChat(`🏆 [${currentRoomData.host.name}] 기권승! (${myNickname}님 퇴장)`);
-                    roomRef.update({
+                    const hostWins = (snapRoom.host.wins || 0) + 1;
+                    pushRoomSystemChat(`🏆 [${snapRoom.host.name}] 기권승! (${myNickname}님 퇴장)`);
+                    await roomRef.update({
                         guest: null,
                         status: 'waiting',
                         'host/ready': false,
@@ -891,10 +1088,10 @@
                         activeShot: null,
                         winner: 1,
                         winReason: '기권승'
-                    });
+                    }).catch(() => {});
                 } else {
                     pushRoomSystemChat(`${myNickname}님이 퇴장했습니다.`);
-                    roomRef.update({ guest: null, status: 'waiting', 'host/ready': false, isPaused: false, activeShot: null, winner: 0 });
+                    await roomRef.update({ guest: null, status: 'waiting', 'host/ready': false, isPaused: false, activeShot: null, winner: 0 }).catch(() => {});
                 }
             }
             cleanupRoomAndReturn();
@@ -908,28 +1105,45 @@
             if (av_animFrame) cancelAnimationFrame(av_animFrame);
             if (jk_animFrame) cancelAnimationFrame(jk_animFrame);
             roomRef = null; roomChatRef = null; currentRoomId = null; currentRoomData = null; myRole = null;
-            lastKnownGuestName = ""; isFinishingMatch = false;
+            lastKnownGuestName = ""; isFinishingMatch = false; lastSavedMatchId = "";
             jk_isMoving = false; jk_isMyShot = false; jk_selectedPiece = null; jk_lastProcessedShotId = 0; jk_pendingPrevSnapshot = null;
             showScreen('lobbyScreen');
+            if (currentGameId) {
+                attachLobbyListeners(currentGameId);
+            }
         }
 
         // ==========================================
-        // 승패 이력 저장 공통 함수
+        // 승패 이력 저장 공통 함수 (matchId 키로 중복 방지)
         // ==========================================
-        function recordMatchHistory(winnerName, loserName, reason, startTime, isDraw = false) {
-            const durationSec = Math.max(1, Math.floor((Date.now() - (startTime || Date.now())) / 1000));
-            if (!currentGameId || !winnerName || !loserName) return durationSec;
+        function recordMatchHistory(matchId, winnerName, loserName, reason, startTime, isDraw = false) {
+            const now = Date.now();
+            const durationSec = Math.max(1, Math.floor((now - (startTime || now)) / 1000));
+            if (!currentGameId || !winnerName || !loserName) {
+                return Promise.resolve({ durationSec, record: null });
+            }
 
-            db.ref(`${getGameBasePath(currentGameId)}/matchHistory`).push({
-                winner: winnerName,
-                loser: loserName,
-                reason: reason,
+            const key = matchId || makeMatchId(now);
+            const { weekKey } = getCurrentKstWeekInfo(now);
+            const record = {
+                matchId: key,
+                winner: String(winnerName),
+                loser: String(loserName),
+                reason: String(reason || '승리'),
                 isDraw: !!isDraw,
                 durationSec: durationSec,
-                timestamp: Date.now()
-            }).catch(err => console.error('승패 기록 저장 실패:', err));
+                timestamp: now,
+                weekKey: weekKey
+            };
 
-            return durationSec;
+            return db.ref(`${getGameBasePath(currentGameId)}/matchHistory/${key}`)
+                .set(record)
+                .then(() => ({ durationSec, record }))
+                .catch(err => {
+                    console.error('승패 기록 저장 실패:', err);
+                    pushRoomSystemChat(`⚠️ 승패 기록 저장 실패 (${err.code || err.message})`);
+                    return { durationSec, record };
+                });
         }
 
         // ==========================================
@@ -951,6 +1165,8 @@
                 isPaused: false,
                 pausedBy: "",
                 gameStartTime: now,
+                currentMatchId: makeMatchId(now),
+                lastMatchRecord: null,
                 boardState: initialBoard,
                 activeShot: null,
                 lastMoveInfo: null,
@@ -1044,35 +1260,73 @@
             if (isFinishingMatch || !currentRoomData || currentRoomData.status !== 'playing') return;
             isFinishingMatch = true;
 
-            const hostName = currentRoomData.host ? currentRoomData.host.name : '방장';
-            const guestName = currentRoomData.guest ? currentRoomData.guest.name : (lastKnownGuestName || '상대방');
+            const snapRoom = currentRoomData;
+            const hostName = snapRoom.host ? snapRoom.host.name : '방장';
+            const guestName = snapRoom.guest ? snapRoom.guest.name : (lastKnownGuestName || '상대방');
+            const matchId = snapRoom.currentMatchId || makeMatchId(snapRoom.gameStartTime || Date.now());
+            const now = Date.now();
+            const durationSec = Math.max(1, Math.floor((now - (snapRoom.gameStartTime || now)) / 1000));
+            const { weekKey } = getCurrentKstWeekInfo(now);
 
-            const hostWins = (currentRoomData.host.wins || 0) + (winnerNum === 1 ? 1 : 0);
-            const guestWins = (currentRoomData.guest ? (currentRoomData.guest.wins || 0) : 0) + (winnerNum === 2 ? 1 : 0);
+            const hostWins = (snapRoom.host.wins || 0) + (winnerNum === 1 ? 1 : 0);
+            const guestWins = (snapRoom.guest ? (snapRoom.guest.wins || 0) : 0) + (winnerNum === 2 ? 1 : 0);
 
+            let matchRecord = null;
+            if ((winnerNum === 1 || winnerNum === 2 || winnerNum === 3) && currentGameId) {
+                const isDraw = winnerNum === 3;
+                const winnerName = winnerNum === 2 ? guestName : hostName;
+                const loserName = winnerNum === 2 ? hostName : guestName;
+                matchRecord = {
+                    matchId: matchId,
+                    winner: String(winnerName),
+                    loser: String(loserName),
+                    reason: String(reason || '승리'),
+                    isDraw: isDraw,
+                    durationSec: durationSec,
+                    timestamp: now,
+                    weekKey: weekKey
+                };
+
+                // 1) 승패 이력 먼저 저장
+                lastSavedMatchId = matchId;
+                db.ref(`${getGameBasePath(currentGameId)}/matchHistory/${matchId}`)
+                    .set(matchRecord)
+                    .catch(err => {
+                        console.error('승패 기록 저장 실패:', err);
+                        pushRoomSystemChat(`⚠️ 승패 기록 저장 실패 (${err.code || err.message})`);
+                    });
+            }
+
+            // 2) 방 상태 업데이트 (undefined 값 제거 후 안전하게 전달)
             const updates = {
                 status: 'full',
                 winner: winnerNum,
                 winReason: reason,
                 isPaused: false,
                 activeShot: null,
+                lastMatchRecord: matchRecord,
                 'host/ready': false,
                 'guest/ready': false,
                 'host/wins': hostWins,
-                'guest/wins': guestWins,
-                ...extraData
+                'guest/wins': guestWins
             };
+
+            if (extraData && typeof extraData === 'object') {
+                Object.keys(extraData).forEach(k => {
+                    if (extraData[k] !== undefined) {
+                        updates[k] = extraData[k];
+                    }
+                });
+            }
 
             roomRef.update(updates).catch(err => console.error('방 상태 업데이트 오류:', err));
 
-            if ((winnerNum === 1 || winnerNum === 2) && currentGameId) {
-                const winnerName = winnerNum === 1 ? hostName : guestName;
-                const loserName = winnerNum === 1 ? guestName : hostName;
-                const durationSec = recordMatchHistory(winnerName, loserName, reason, currentRoomData.gameStartTime, false);
-                pushRoomSystemChat(`🏆 [${winnerName}] 승리! (${reason}, 소요시간: ${formatDuration(durationSec)})`);
-            } else if (winnerNum === 3 && currentGameId) {
-                const durationSec = recordMatchHistory(hostName, guestName, reason, currentRoomData.gameStartTime, true);
-                pushRoomSystemChat(`🤝 무승부! (${reason}, 소요시간: ${formatDuration(durationSec)})`);
+            if (matchRecord) {
+                if (matchRecord.isDraw) {
+                    pushRoomSystemChat(`🤝 무승부! (${reason}, 소요시간: ${formatDuration(durationSec)})`);
+                } else {
+                    pushRoomSystemChat(`🏆 [${matchRecord.winner}] 승리! (${reason}, 소요시간: ${formatDuration(durationSec)})`);
+                }
             }
         }
 
@@ -1083,7 +1337,6 @@
                 return;
             }
 
-            // 장기 알까기 기물이 움직이는 중에는 시간 초과 판정 보류
             const isShotInProgress = currentGameId === 'janggi' && (jk_isMoving || !!currentRoomData.activeShot);
 
             let remSec = currentRoomData.remainingWhenPaused || 60;
@@ -1109,7 +1362,8 @@
                 if (currentGameId === 'omok') {
                     finishGame(timeoutWinner, '시간 초과', { moves: currentRoomData.moves || [] });
                 } else {
-                    finishGame(timeoutWinner, '시간 초과', { boardState: currentRoomData.boardState });
+                    const extra = currentRoomData.boardState ? { boardState: currentRoomData.boardState } : {};
+                    finishGame(timeoutWinner, '시간 초과', extra);
                 }
             }
         }
@@ -1424,7 +1678,6 @@
             return currentGameId === 'janggi' && myRole === 'guest';
         }
 
-        // 기준 좌표 -> 화면 표시 좌표 (참여자는 180도 회전)
         function jkToScreen(x, y) {
             if (isJanggiFlipped()) {
                 return { x: JK_BOARD_W - x, y: JK_BOARD_H - y };
@@ -1432,7 +1685,6 @@
             return { x, y };
         }
 
-        // 화면 터치 좌표 -> 기준 좌표 (참여자는 180도 역변환)
         function jkToWorld(sx, sy) {
             if (isJanggiFlipped()) {
                 return { x: JK_BOARD_W - sx, y: JK_BOARD_H - sy };
@@ -1460,7 +1712,6 @@
                 list.push({ x: pos.x, y: pos.y, team, typeKey, label, out: false });
             };
 
-            // 한(漢) - 기준 좌표 상단 (guest = 2, 참여자 화면에서는 180도 회전되어 하단 표시)
             [
                 { col: 0, type: 'BIG', sub: '차' },
                 { col: 1, type: 'MID', sub: '상' },
@@ -1473,7 +1724,6 @@
             [1, 7].forEach(c => pushPiece(c, 2, 'han', 'BIG', '포'));
             [0, 2, 4, 6, 8].forEach(c => pushPiece(c, 3, 'han', 'PAWN'));
 
-            // 초(楚) - 기준 좌표 하단 (host = 1)
             [
                 { col: 0, type: 'BIG', sub: '차' },
                 { col: 1, type: 'MID', sub: '마' },
@@ -2163,164 +2413,4 @@
             function step() {
                 if (!currentRoomData || currentGameId !== 'abalone') return;
                 drawAbaloneBoard(currentRoomData.boardState || {}, currentRoomData.lastMoveInfo);
-                if (currentRoomData.lastMoveInfo && (Date.now() - currentRoomData.lastMoveInfo.timestamp) < 2300) {
-                    av_animFrame = requestAnimationFrame(step);
-                }
-            }
-            step();
-        }
-
-        function drawAbaloneBoard(boardObj, lastMoveInfo) {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            const centerX = canvas.width / 2; const centerY = canvas.height / 2;
-
-            ctx.save();
-            ctx.beginPath();
-            for (let i = 0; i < 6; i++) {
-                const angle = (Math.PI / 3) * i; const r = 250;
-                const x = centerX + r * Math.cos(angle); const y = centerY + r * Math.sin(angle);
-                if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-            }
-            ctx.closePath();
-            ctx.fillStyle = '#dceefb';
-            ctx.fill();
-            ctx.lineWidth = 7;
-            ctx.strokeStyle = '#64a1d8';
-            ctx.stroke();
-            ctx.restore();
-
-            let traceAlpha = 0;
-            if (lastMoveInfo && lastMoveInfo.timestamp) {
-                const elapsed = Date.now() - lastMoveInfo.timestamp;
-                if (elapsed < 2200) {
-                    traceAlpha = Math.max(0, 1 - (elapsed / 2200));
-                }
-            }
-
-            for (const [k, val] of Object.entries(boardObj)) {
-                const { q, r } = parseKey(k);
-                const { x, y } = hexToPixel(q, r);
-
-                ctx.beginPath();
-                ctx.arc(x, y, MARBLE_RADIUS - 2, 0, Math.PI * 2);
-                ctx.fillStyle = '#b6d8f2';
-                ctx.fill();
-                ctx.strokeStyle = '#8abce6';
-                ctx.lineWidth = 1.5;
-                ctx.stroke();
-
-                if (val === 1 || val === 2) {
-                    const isSelected = av_selected.some(s => s.q === q && s.r === r);
-                    const isMovedDest = traceAlpha > 0 && lastMoveInfo.toCells && lastMoveInfo.toCells.some(c => c.q === q && c.r === r);
-
-                    ctx.save();
-                    ctx.beginPath();
-                    ctx.arc(x, y, MARBLE_RADIUS, 0, Math.PI * 2);
-
-                    const grad = ctx.createRadialGradient(x - 7, y - 7, 3, x, y, MARBLE_RADIUS);
-                    if (val === 1) {
-                        grad.addColorStop(0, '#555');
-                        grad.addColorStop(0.4, '#1e272e');
-                        grad.addColorStop(1, '#000000');
-                    } else {
-                        grad.addColorStop(0, '#ffffff');
-                        grad.addColorStop(0.6, '#f1f2f6');
-                        grad.addColorStop(1, '#ced6e0');
-                    }
-                    ctx.fillStyle = grad;
-                    ctx.shadowColor = 'rgba(0,0,0,0.35)';
-                    ctx.shadowBlur = 5;
-                    ctx.shadowOffsetY = 3;
-                    ctx.fill();
-
-                    ctx.lineWidth = 1.5;
-                    ctx.strokeStyle = val === 1 ? '#111' : '#7f8c8d';
-                    ctx.stroke();
-
-                    if (isMovedDest) {
-                        ctx.lineWidth = 3.5;
-                        ctx.strokeStyle = `rgba(255, 71, 87, ${traceAlpha})`;
-                        ctx.stroke();
-                    }
-
-                    if (isSelected) {
-                        ctx.lineWidth = 4;
-                        ctx.strokeStyle = '#ffa502';
-                        ctx.stroke();
-                    }
-                    ctx.restore();
-                }
-            }
-
-            if (traceAlpha > 0 && lastMoveInfo.fromCells && lastMoveInfo.dir) {
-                ctx.save();
-                lastMoveInfo.fromCells.forEach(cell => {
-                    const startPos = hexToPixel(cell.q, cell.r);
-                    const endPos = hexToPixel(cell.q + lastMoveInfo.dir.q, cell.r + lastMoveInfo.dir.r);
-
-                    ctx.beginPath();
-                    ctx.setLineDash([4, 3]);
-                    ctx.arc(startPos.x, startPos.y, MARBLE_RADIUS - 4, 0, Math.PI * 2);
-                    ctx.strokeStyle = `rgba(255, 107, 129, ${traceAlpha * 0.85})`;
-                    ctx.lineWidth = 2.5;
-                    ctx.stroke();
-                    ctx.setLineDash([]);
-
-                    const angle = Math.atan2(endPos.y - startPos.y, endPos.x - startPos.x);
-                    const headLen = 9;
-                    ctx.beginPath();
-                    ctx.moveTo(startPos.x, startPos.y);
-                    ctx.lineTo(endPos.x, endPos.y);
-                    ctx.strokeStyle = `rgba(255, 71, 87, ${traceAlpha * 0.95})`;
-                    ctx.lineWidth = 3;
-                    ctx.stroke();
-
-                    ctx.beginPath();
-                    ctx.moveTo(endPos.x, endPos.y);
-                    ctx.lineTo(endPos.x - headLen * Math.cos(angle - Math.PI / 6), endPos.y - headLen * Math.sin(angle - Math.PI / 6));
-                    ctx.lineTo(endPos.x - headLen * Math.cos(angle + Math.PI / 6), endPos.y - headLen * Math.sin(angle + Math.PI / 6));
-                    ctx.closePath();
-                    ctx.fillStyle = `rgba(255, 71, 87, ${traceAlpha * 0.95})`;
-                    ctx.fill();
-                });
-                ctx.restore();
-            }
-
-            for (const move of av_validMoves) {
-                const { x, y } = hexToPixel(move.targetQ, move.targetR);
-                ctx.save();
-                ctx.beginPath();
-                ctx.arc(x, y, 9, 0, Math.PI * 2);
-                ctx.fillStyle = move.type === 'push' ? '#ff4757' : '#2ed573';
-                ctx.shadowColor = 'rgba(0,0,0,0.5)'; ctx.shadowBlur = 4;
-                ctx.fill();
-                ctx.lineWidth = 2; ctx.strokeStyle = '#fff'; ctx.stroke();
-                ctx.restore();
-            }
-        }
-
-        function formatDuration(sec) {
-            const m = String(Math.floor(sec / 60)).padStart(2, '0');
-            const s = String(sec % 60).padStart(2, '0');
-            return `${m}분 ${s}초`;
-        }
-
-        function formatMatchDate(ts) {
-            if (!ts) return '날짜 기록 없음';
-            const d = new Date(ts);
-            if (isNaN(d.getTime())) return '날짜 기록 없음';
-            const yyyy = d.getFullYear();
-            const mm = String(d.getMonth() + 1).padStart(2, '0');
-            const dd = String(d.getDate()).padStart(2, '0');
-            const hh = String(d.getHours()).padStart(2, '0');
-            const min = String(d.getMinutes()).padStart(2, '0');
-            return `${yyyy}.${mm}.${dd} ${hh}:${min}`;
-        }
-
-        function escapeHtml(str) {
-            if (!str) return '';
-            return String(str).replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s]));
-        }
-    </script>
-</body>
-</html>
+                if (currentRoomData.lastMoveInfo && (Date.now() - currentRoom
