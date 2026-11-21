@@ -101,7 +101,7 @@
         .chat-msg.system { color: #e67e22; font-weight: bold; text-align: center; margin: 2px 0; }
         .chat-input-row { display: flex; gap: 6px; }
 
-        /* 게임방 플레이어 슬롯 (턴 활성: 파랑 / 비활성: 확실한 회색) */
+        /* 게임방 플레이어 슬롯 */
         .players-bar {
             display: grid; grid-template-columns: 1fr auto 1fr; gap: 8px; align-items: center; width: 100%;
         }
@@ -110,14 +110,12 @@
             display: flex; flex-direction: column; align-items: center; text-align: center; position: relative;
             transition: all 0.25s ease;
         }
-        /* 내 턴일 때: 선명한 파란색 강조 */
         .player-card.active-turn {
             background: #e3f2fd;
             border-color: #1e88e5;
             box-shadow: 0 0 12px rgba(30, 136, 229, 0.35);
             transform: scale(1.02);
         }
-        /* 상대방 턴이라 대기 중일 때: 확실한 회색 비활성 처리 */
         .player-card.inactive-turn {
             background: #dfe4ea;
             border-color: #b2bec3;
@@ -163,11 +161,15 @@
         }
         .board-overlay.show { display: flex; }
 
+        /* 승패 이력 */
         .history-item {
-            font-size: 0.8rem; padding: 6px 8px; border-bottom: 1px solid #eee;
-            display: flex; justify-content: space-between; color: #555;
+            font-size: 0.8rem; padding: 7px 8px; border-bottom: 1px solid #eee;
+            display: flex; justify-content: space-between; align-items: center; gap: 8px; color: #555;
         }
         .history-item:last-child { border-bottom: none; }
+        .history-main { display: flex; flex-direction: column; gap: 2px; }
+        .history-date { font-size: 0.72rem; color: #95a5a6; }
+        .history-duration { color: #2980b9; font-weight: bold; white-space: nowrap; }
     </style>
 </head>
 <body>
@@ -223,7 +225,7 @@
 
         <div class="card">
             <h3>🏆 최근 승패 이력 & 소요 시간</h3>
-            <div id="matchHistoryList" class="history-list" style="max-height: 140px; min-height: 80px;">
+            <div id="matchHistoryList" class="history-list" style="max-height: 180px; min-height: 80px;">
                 <p style="text-align: center; color: #888; margin-top: 20px;">아직 기록된 대국이 없습니다.</p>
             </div>
         </div>
@@ -325,6 +327,7 @@
         const db = firebase.database();
 
         const STORAGE_NICKNAME_KEY = 'boardgame_saved_nickname';
+        const ROOM_ZOMBIE_TIMEOUT_MS = 180000; // 3분 이상 방장 신호 없으면 유령방 자동 삭제
         const myId = 'user_' + Math.random().toString(36).substr(2, 8);
         let myNickname = "";
         let currentGameId = null;
@@ -332,6 +335,8 @@
         let currentRoomId = null;
         let myRole = null; // 'host'(흑돌=1) 또는 'guest'(백돌=2)
         let currentRoomData = null;
+        let lastKnownGuestName = "";
+        let isFinishingMatch = false;
 
         let lobbyRoomsRef = null;
         let lobbyChatRef = null;
@@ -339,6 +344,7 @@
         let roomRef = null;
         let roomChatRef = null;
         let localTimerInterval = null;
+        let heartbeatInterval = null;
 
         // 캔버스 설정
         const canvas = document.getElementById('gameCanvas');
@@ -397,7 +403,7 @@
                 return;
             }
             myNickname = nameVal;
-            localStorage.setItem(STORAGE_NICKNAME_KEY, myNickname); // 로컬스토리지 저장 (다음 접속 시 오토필)
+            localStorage.setItem(STORAGE_NICKNAME_KEY, myNickname);
             document.getElementById('portalMyName').innerText = myNickname;
             showScreen('gameSelectScreen');
         }
@@ -454,10 +460,25 @@
                     return;
                 }
 
+                let visibleCount = 0;
+                const now = Date.now();
+
                 Object.keys(rooms).forEach(rId => {
                     const r = rooms[rId];
-                    if (!r || !r.host) return;
+                    // 방장 정보가 없는 비정상 방 정리
+                    if (!r || !r.host) {
+                        db.ref(`${basePath}/rooms/${rId}`).remove();
+                        return;
+                    }
 
+                    // 방장 하트비트(lastActive) 또는 turnStartTime 기준 3분 이상 응답 없는 유령방 자동 삭제
+                    const lastPing = r.lastActive || r.turnStartTime || 0;
+                    if (now - lastPing > ROOM_ZOMBIE_TIMEOUT_MS) {
+                        db.ref(`${basePath}/rooms/${rId}`).remove();
+                        return;
+                    }
+
+                    visibleCount++;
                     let badgeClass = 'badge-open';
                     let statusText = '참여가능 (1/2)';
                     let canJoin = true;
@@ -480,6 +501,10 @@
                     `;
                     listEl.appendChild(item);
                 });
+
+                if (visibleCount === 0) {
+                    listEl.innerHTML = '<p style="text-align: center; color: #888; margin-top: 35px;">생성된 방이 없습니다. 방을 만들어 보세요!</p>';
+                }
             });
 
             lobbyChatRef = db.ref(`${basePath}/lobbyChat`).limitToLast(40);
@@ -509,9 +534,13 @@
                 items.reverse().forEach(h => {
                     const div = document.createElement('div');
                     div.className = 'history-item';
+                    const dateStr = formatMatchDate(h.timestamp);
                     div.innerHTML = `
-                        <span>🏆 <b>${escapeHtml(h.winner)}</b> 승 (패: ${escapeHtml(h.loser)}) - ${escapeHtml(h.reason)}</span>
-                        <span style="color:#2980b9; font-weight:bold;">⏱️ ${formatDuration(h.durationSec)}</span>
+                        <div class="history-main">
+                            <span>🏆 <b>${escapeHtml(h.winner)}</b> 승 (패: ${escapeHtml(h.loser)}) - ${escapeHtml(h.reason)}</span>
+                            <span class="history-date">📅 ${dateStr}</span>
+                        </div>
+                        <span class="history-duration">⏱️ ${formatDuration(h.durationSec || 0)}</span>
                     `;
                     histEl.appendChild(div);
                 });
@@ -535,16 +564,18 @@
             currentRoomId = newRoomId;
             myRole = 'host';
 
+            const now = Date.now();
             const initialBoard = currentGameId === 'omok' ? null : getDefaultAbaloneBoard();
 
             const initialRoomData = {
                 roomId: newRoomId,
                 gameType: currentGameId,
                 status: 'waiting',
+                lastActive: now,
                 host: { id: myId, name: myNickname, ready: false, undoLeft: 1, wins: 0, score: 0 },
                 guest: null,
                 turn: 1,
-                turnStartTime: Date.now(),
+                turnStartTime: now,
                 remainingWhenPaused: 60,
                 isPaused: false,
                 pausedBy: "",
@@ -564,13 +595,25 @@
             }).catch(err => alert('방 생성 오류: ' + err.message));
         }
 
+        // 트랜잭션 기반 안전한 방 참여 (status 잔류 버그 해결)
         function joinRoom(rId) {
             if (!currentGameId) return;
             const targetRef = db.ref(`${getGameBasePath(currentGameId)}/rooms/${rId}`);
 
-            targetRef.once('value', snapshot => {
-                const r = snapshot.val();
-                if (!r || r.guest || r.status !== 'waiting') {
+            targetRef.transaction(r => {
+                if (!r) return; // 방이 없음
+                if (!r.host || r.guest || r.status === 'playing') {
+                    return; // 참여 불가 시 트랜잭션 중단
+                }
+                r.guest = { id: myId, name: myNickname, ready: false, undoLeft: 1, wins: 0, score: 0 };
+                r.status = 'full';
+                return r;
+            }, (error, committed, snapshot) => {
+                if (error) {
+                    alert('방 참여 중 오류가 발생했습니다: ' + error.message);
+                    return;
+                }
+                if (!committed) {
                     alert('이미 참여했거나 사라진 방입니다.');
                     return;
                 }
@@ -578,12 +621,6 @@
                 currentRoomId = rId;
                 myRole = 'guest';
                 roomRef = targetRef;
-
-                roomRef.update({
-                    guest: { id: myId, name: myNickname, ready: false, undoLeft: 1, wins: 0, score: 0 },
-                    status: 'full'
-                });
-
                 roomRef.child('guest').onDisconnect().remove();
                 enterRoomView(rId);
                 pushRoomSystemChat(`${myNickname}님이 방에 입장했습니다.`);
@@ -593,6 +630,8 @@
         function enterRoomView(rId) {
             showScreen('roomScreen');
             document.getElementById('roomChatBox').innerHTML = '';
+            lastKnownGuestName = "";
+            isFinishingMatch = false;
             const basePath = getGameBasePath(currentGameId);
 
             const containerBox = document.getElementById('boardContainerBox');
@@ -602,11 +641,18 @@
                 canvas.style.borderRadius = '8px';
                 canvas.width = 420; canvas.height = 420;
             } else {
-                // 아발론: 연한 파란색 배경 테마 적용
                 containerBox.style.background = '#bfe0f8';
                 canvas.style.background = '#dceefb';
                 canvas.style.borderRadius = '50%';
                 canvas.width = 540; canvas.height = 540;
+            }
+
+            // 방장 하트비트 시작 (15초마다 생존 신호 갱신)
+            if (heartbeatInterval) clearInterval(heartbeatInterval);
+            if (myRole === 'host') {
+                heartbeatInterval = setInterval(() => {
+                    if (roomRef) roomRef.child('lastActive').set(Date.now());
+                }, 15000);
             }
 
             roomRef.on('value', snapshot => {
@@ -617,6 +663,10 @@
                     return;
                 }
 
+                if (data.guest && data.guest.name) {
+                    lastKnownGuestName = data.guest.name;
+                }
+
                 if (myRole === 'guest' && (!data.guest || data.guest.id !== myId)) {
                     alert('방장에 의해 방에서 내보내졌습니다.');
                     cleanupRoomAndReturn();
@@ -624,8 +674,32 @@
                 }
 
                 if (myRole === 'host' && !data.guest && data.status !== 'waiting') {
+                    // 게임 도중 상대방 연결이 비정상 종료된 경우 기권승 기록
+                    if (data.status === 'playing' && lastKnownGuestName && !isFinishingMatch) {
+                        isFinishingMatch = true;
+                        const durationSec = recordMatchHistory(data.host.name, lastKnownGuestName, '상대 연결 끊김(기권승)', data.gameStartTime);
+                        pushRoomSystemChat(`🏆 [${data.host.name}] 기권승! (${lastKnownGuestName}님 연결 끊김, 소요시간: ${formatDuration(durationSec)})`);
+                        const hostWins = (data.host.wins || 0) + 1;
+                        lastKnownGuestName = "";
+                        roomRef.update({
+                            status: 'waiting',
+                            lastActive: Date.now(),
+                            'host/ready': false,
+                            'host/wins': hostWins,
+                            isPaused: false,
+                            winner: 1,
+                            winReason: '기권승',
+                            moves: [],
+                            lastMoveInfo: null,
+                            prevSnapshot: null,
+                            boardState: currentGameId === 'omok' ? null : getDefaultAbaloneBoard()
+                        });
+                        return;
+                    }
+
                     roomRef.update({
                         status: 'waiting',
+                        lastActive: Date.now(),
                         'host/ready': false,
                         isPaused: false,
                         winner: 0,
@@ -638,6 +712,9 @@
                 }
 
                 currentRoomData = data;
+                if (data.status === 'playing') {
+                    isFinishingMatch = false;
+                }
                 renderRoomState(data);
 
                 if (myRole === 'host' && data.status === 'full' && data.host && data.guest) {
@@ -706,7 +783,17 @@
             if (currentRoomData.status !== 'playing' && myPlayerObj && myPlayerObj.ready) {
                 alert('준비 완료 상태에서는 퇴장할 수 없습니다. 먼저 [준비 취소]를 눌러주세요.'); return;
             }
-            if (currentRoomData.status === 'playing' && !confirm('게임 도중 나가시면 기권패 처리됩니다. 나가시겠습니까?')) return;
+
+            const isPlayingNow = currentRoomData.status === 'playing';
+            if (isPlayingNow && !confirm('게임 도중 나가시면 기권패 처리됩니다. 나가시겠습니까?')) return;
+
+            // 게임 중 퇴장 시 기권승 이력 저장
+            if (isPlayingNow && currentRoomData.host && currentRoomData.guest && !isFinishingMatch) {
+                isFinishingMatch = true;
+                const winnerName = myRole === 'host' ? currentRoomData.guest.name : currentRoomData.host.name;
+                const loserName = myRole === 'host' ? currentRoomData.host.name : currentRoomData.guest.name;
+                recordMatchHistory(winnerName, loserName, '기권승', currentRoomData.gameStartTime);
+            }
 
             if (myRole === 'host') {
                 roomRef.onDisconnect().cancel();
@@ -714,8 +801,22 @@
                 roomRef.remove();
             } else {
                 roomRef.child('guest').onDisconnect().cancel();
-                pushRoomSystemChat(`${myNickname}님이 퇴장했습니다.`);
-                roomRef.update({ guest: null, status: 'waiting', 'host/ready': false, isPaused: false, winner: 0 });
+                if (isPlayingNow) {
+                    const hostWins = (currentRoomData.host.wins || 0) + 1;
+                    pushRoomSystemChat(`🏆 [${currentRoomData.host.name}] 기권승! (${myNickname}님 퇴장)`);
+                    roomRef.update({
+                        guest: null,
+                        status: 'waiting',
+                        'host/ready': false,
+                        'host/wins': hostWins,
+                        isPaused: false,
+                        winner: 1,
+                        winReason: '기권승'
+                    });
+                } else {
+                    pushRoomSystemChat(`${myNickname}님이 퇴장했습니다.`);
+                    roomRef.update({ guest: null, status: 'waiting', 'host/ready': false, isPaused: false, winner: 0 });
+                }
             }
             cleanupRoomAndReturn();
         }
@@ -724,9 +825,29 @@
             if (roomRef) roomRef.off();
             if (roomChatRef) roomChatRef.off();
             if (localTimerInterval) clearInterval(localTimerInterval);
+            if (heartbeatInterval) clearInterval(heartbeatInterval);
             if (av_animFrame) cancelAnimationFrame(av_animFrame);
             roomRef = null; roomChatRef = null; currentRoomId = null; currentRoomData = null; myRole = null;
+            lastKnownGuestName = ""; isFinishingMatch = false;
             showScreen('lobbyScreen');
+        }
+
+        // ==========================================
+        // 승패 이력 저장 공통 함수
+        // ==========================================
+        function recordMatchHistory(winnerName, loserName, reason, startTime) {
+            const durationSec = Math.max(1, Math.floor((Date.now() - (startTime || Date.now())) / 1000));
+            if (!currentGameId || !winnerName || !loserName) return durationSec;
+
+            db.ref(`${getGameBasePath(currentGameId)}/matchHistory`).push({
+                winner: winnerName,
+                loser: loserName,
+                reason: reason,
+                durationSec: durationSec,
+                timestamp: Date.now()
+            }).catch(err => console.error('승패 기록 저장 실패:', err));
+
+            return durationSec;
         }
 
         // ==========================================
@@ -736,9 +857,11 @@
             const now = Date.now();
             const initialBoard = currentGameId === 'omok' ? null : getDefaultAbaloneBoard();
             av_selected = []; av_validMoves = [];
+            isFinishingMatch = false;
 
             roomRef.update({
                 status: 'playing',
+                lastActive: now,
                 turn: 1,
                 turnStartTime: now,
                 remainingWhenPaused: 60,
@@ -759,7 +882,6 @@
             pushRoomSystemChat(`양쪽 모두 준비 완료! [${currentGameObj.title}] 대국이 시작되었습니다.`);
         }
 
-        // 무르기 쿠폰 (오목 & 아발론 모두 지원)
         function useUndoCoupon() {
             if (!currentRoomData || currentRoomData.status !== 'playing' || currentRoomData.isPaused) return;
             const myTurnNum = myRole === 'host' ? 1 : 2;
@@ -817,7 +939,11 @@
         }
 
         function finishGame(winnerNum, reason, extraData = {}) {
-            if (!currentRoomData || currentRoomData.status !== 'playing') return;
+            if (isFinishingMatch || !currentRoomData || currentRoomData.status !== 'playing') return;
+            isFinishingMatch = true;
+
+            const hostName = currentRoomData.host ? currentRoomData.host.name : '방장';
+            const guestName = currentRoomData.guest ? currentRoomData.guest.name : (lastKnownGuestName || '상대방');
 
             const hostWins = (currentRoomData.host.wins || 0) + (winnerNum === 1 ? 1 : 0);
             const guestWins = (currentRoomData.guest ? (currentRoomData.guest.wins || 0) : 0) + (winnerNum === 2 ? 1 : 0);
@@ -834,16 +960,12 @@
                 ...extraData
             };
 
-            roomRef.update(updates);
+            roomRef.update(updates).catch(err => console.error('방 상태 업데이트 오류:', err));
 
-            const durationSec = Math.max(1, Math.floor((Date.now() - (currentRoomData.gameStartTime || Date.now())) / 1000));
             if ((winnerNum === 1 || winnerNum === 2) && currentGameId) {
-                const winnerName = winnerNum === 1 ? currentRoomData.host.name : currentRoomData.guest.name;
-                const loserName = winnerNum === 1 ? currentRoomData.guest.name : currentRoomData.host.name;
-
-                db.ref(`${getGameBasePath(currentGameId)}/matchHistory`).push({
-                    winner: winnerName, loser: loserName, reason: reason, durationSec: durationSec, timestamp: firebase.database.ServerValue.TIMESTAMP
-                });
+                const winnerName = winnerNum === 1 ? hostName : guestName;
+                const loserName = winnerNum === 1 ? guestName : hostName;
+                const durationSec = recordMatchHistory(winnerName, loserName, reason, currentRoomData.gameStartTime);
 
                 pushRoomSystemChat(`🏆 [${winnerName}] 승리! (${reason}, 소요시간: ${formatDuration(durationSec)})`);
             }
@@ -871,7 +993,7 @@
                 document.getElementById('hostTimerDisplay').innerText = '01:00';
             }
 
-            if (remSec <= 0 && !currentRoomData.isPaused && myRole === 'host') {
+            if (remSec <= 0 && !currentRoomData.isPaused && myRole === 'host' && !isFinishingMatch) {
                 const timeoutWinner = currentRoomData.turn === 1 ? 2 : 1;
                 if (currentGameId === 'omok') {
                     finishGame(timeoutWinner, '시간 초과', { moves: currentRoomData.moves || [] });
@@ -1092,7 +1214,6 @@
             let hScore = currentRoomData.host.score || 0;
             let gScore = currentRoomData.guest.score || 0;
 
-            // 이동 경로 추적용 배열 (출발지 -> 도착지)
             const fromCells = av_selected.map(s => ({ q: s.q, r: s.r }));
             const toCells = av_selected.map(s => ({ q: s.q + dir.q, r: s.r + dir.r }));
 
@@ -1104,7 +1225,6 @@
                 const tail = av_selected.find(s => !av_selected.some(o => o.q === s.q - dir.q && o.r === s.r - dir.r));
 
                 if (type === 'push') {
-                    // 밀려난 상대 구슬들도 이동 경로에 추가
                     for (let k = 1; k <= move.pushCount; k++) {
                         const pq = head.q + dir.q * k;
                         const pr = head.r + dir.r * k;
@@ -1198,7 +1318,6 @@
                 guestReadyTag.className = 'ready-tag';
             }
 
-            // 3번 요구사항: 턴인 사람은 파란색(active-turn), 안 하고 있는 사람은 확실한 회색(inactive-turn)
             const cardHost = document.getElementById('cardHost');
             const cardGuest = document.getElementById('cardGuest');
             if (data.status === 'playing') {
@@ -1265,7 +1384,7 @@
                 if (data.winner === 1 || data.winner === 2) {
                     const winName = data.winner === 1 ? data.host.name : (data.guest ? data.guest.name : '상대방');
                     ovTitle.innerText = `🏆 ${winName} 승리! (${data.winReason})`;
-                    ovDesc.innerText = '다시 하시려면 양쪽 모두 [준비 완료]를 눌러주세요!';
+                    ovDesc.innerText = data.guest ? '다시 하시려면 양쪽 모두 [준비 완료]를 눌러주세요!' : '새로운 상대방의 입장을 기다리는 중입니다.';
                 } else if (!data.guest) {
                     ovTitle.innerText = '상대방 입장을 기다리는 중...';
                     ovDesc.innerText = '대기실에서 다른 플레이어가 참여하면 준비할 수 있습니다.';
@@ -1275,7 +1394,6 @@
                 }
             }
 
-            // 캔버스 그리기 분기
             if (currentGameId === 'omok') {
                 drawOmokBoard(data.moves || []);
             } else if (currentGameId === 'abalone') {
@@ -1351,7 +1469,7 @@
             ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
         }
 
-        // --- 아발론 판 그리기 (연한 파란색 테마 + 이동 경로 잔상 애니메이션) ---
+        // --- 아발론 판 그리기 ---
         function hexToPixel(q, r) {
             const centerX = canvas.width / 2; const centerY = canvas.height / 2;
             const x = centerX + HEX_RADIUS * Math.sqrt(3) * (q + r / 2);
@@ -1375,7 +1493,6 @@
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             const centerX = canvas.width / 2; const centerY = canvas.height / 2;
 
-            // 1번 요구사항: 연한 파란색 육각 게임판 배경
             ctx.save();
             ctx.beginPath();
             for (let i = 0; i < 6; i++) {
@@ -1384,14 +1501,13 @@
                 if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
             }
             ctx.closePath();
-            ctx.fillStyle = '#dceefb'; // 밝고 연한 파스텔 블루
+            ctx.fillStyle = '#dceefb';
             ctx.fill();
             ctx.lineWidth = 7;
-            ctx.strokeStyle = '#64a1d8'; // 선명한 블루 외곽선
+            ctx.strokeStyle = '#64a1d8';
             ctx.stroke();
             ctx.restore();
 
-            // 이동 경로 잔상 투명도 계산 (2.2초 동안 서서히 사라짐)
             let traceAlpha = 0;
             if (lastMoveInfo && lastMoveInfo.timestamp) {
                 const elapsed = Date.now() - lastMoveInfo.timestamp;
@@ -1400,12 +1516,10 @@
                 }
             }
 
-            // 슬롯 및 구슬 렌더링
             for (const [k, val] of Object.entries(boardObj)) {
                 const { q, r } = parseKey(k);
                 const { x, y } = hexToPixel(q, r);
 
-                // 빈 슬롯 홈 (연한 파란색 톤에 어울리는 부드러운 하늘색 홈)
                 ctx.beginPath();
                 ctx.arc(x, y, MARBLE_RADIUS - 2, 0, Math.PI * 2);
                 ctx.fillStyle = '#b6d8f2';
@@ -1424,12 +1538,10 @@
 
                     const grad = ctx.createRadialGradient(x - 7, y - 7, 3, x, y, MARBLE_RADIUS);
                     if (val === 1) {
-                        // 흑돌: 연한 파란 판 위에서 아주 또렷하게 보이는 유광 블랙
                         grad.addColorStop(0, '#555');
                         grad.addColorStop(0.4, '#1e272e');
                         grad.addColorStop(1, '#000000');
                     } else {
-                        // 백돌: 진주빛 화이트 + 테두리로 파란 판과 구분
                         grad.addColorStop(0, '#ffffff');
                         grad.addColorStop(0.6, '#f1f2f6');
                         grad.addColorStop(1, '#ced6e0');
@@ -1440,19 +1552,16 @@
                     ctx.shadowOffsetY = 3;
                     ctx.fill();
 
-                    // 구슬 외곽선
                     ctx.lineWidth = 1.5;
                     ctx.strokeStyle = val === 1 ? '#111' : '#7f8c8d';
                     ctx.stroke();
 
-                    // 방금 이동해 온 도착 구슬 강조 테두리
                     if (isMovedDest) {
                         ctx.lineWidth = 3.5;
                         ctx.strokeStyle = `rgba(255, 71, 87, ${traceAlpha})`;
                         ctx.stroke();
                     }
 
-                    // 내가 현재 터치해 선택한 구슬 강조
                     if (isSelected) {
                         ctx.lineWidth = 4;
                         ctx.strokeStyle = '#ffa502';
@@ -1462,14 +1571,12 @@
                 }
             }
 
-            // 2번 요구사항: 방금 이동한 경로(출발지 점선 원 + 이동 화살표) 잠깐 보여주기
             if (traceAlpha > 0 && lastMoveInfo.fromCells && lastMoveInfo.dir) {
                 ctx.save();
                 lastMoveInfo.fromCells.forEach(cell => {
                     const startPos = hexToPixel(cell.q, cell.r);
                     const endPos = hexToPixel(cell.q + lastMoveInfo.dir.q, cell.r + lastMoveInfo.dir.r);
 
-                    // 출발했던 자리 점선 표시
                     ctx.beginPath();
                     ctx.setLineDash([4, 3]);
                     ctx.arc(startPos.x, startPos.y, MARBLE_RADIUS - 4, 0, Math.PI * 2);
@@ -1478,7 +1585,6 @@
                     ctx.stroke();
                     ctx.setLineDash([]);
 
-                    // 이동 방향 화살표 선
                     const angle = Math.atan2(endPos.y - startPos.y, endPos.x - startPos.x);
                     const headLen = 9;
                     ctx.beginPath();
@@ -1488,7 +1594,6 @@
                     ctx.lineWidth = 3;
                     ctx.stroke();
 
-                    // 화살촉
                     ctx.beginPath();
                     ctx.moveTo(endPos.x, endPos.y);
                     ctx.lineTo(endPos.x - headLen * Math.cos(angle - Math.PI / 6), endPos.y - headLen * Math.sin(angle - Math.PI / 6));
@@ -1500,7 +1605,6 @@
                 ctx.restore();
             }
 
-            // 이동 가능한 위치 초록색/빨간색 가이드 점
             for (const move of av_validMoves) {
                 const { x, y } = hexToPixel(move.targetQ, move.targetR);
                 ctx.save();
@@ -1518,6 +1622,18 @@
             const m = String(Math.floor(sec / 60)).padStart(2, '0');
             const s = String(sec % 60).padStart(2, '0');
             return `${m}분 ${s}초`;
+        }
+
+        function formatMatchDate(ts) {
+            if (!ts) return '날짜 기록 없음';
+            const d = new Date(ts);
+            if (isNaN(d.getTime())) return '날짜 기록 없음';
+            const yyyy = d.getFullYear();
+            const mm = String(d.getMonth() + 1).padStart(2, '0');
+            const dd = String(d.getDate()).padStart(2, '0');
+            const hh = String(d.getHours()).padStart(2, '0');
+            const min = String(d.getMinutes()).padStart(2, '0');
+            return `${yyyy}.${mm}.${dd} ${hh}:${min}`;
         }
 
         function escapeHtml(str) {
