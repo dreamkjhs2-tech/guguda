@@ -2413,4 +2413,164 @@
             function step() {
                 if (!currentRoomData || currentGameId !== 'abalone') return;
                 drawAbaloneBoard(currentRoomData.boardState || {}, currentRoomData.lastMoveInfo);
-                if (currentRoomData.lastMoveInfo && (Date.now() - currentRoom
+                if (currentRoomData.lastMoveInfo && (Date.now() - currentRoomData.lastMoveInfo.timestamp) < 2300) {
+                    av_animFrame = requestAnimationFrame(step);
+                }
+            }
+            step();
+        }
+
+        function drawAbaloneBoard(boardObj, lastMoveInfo) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            const centerX = canvas.width / 2; const centerY = canvas.height / 2;
+
+            ctx.save();
+            ctx.beginPath();
+            for (let i = 0; i < 6; i++) {
+                const angle = (Math.PI / 3) * i; const r = 250;
+                const x = centerX + r * Math.cos(angle); const y = centerY + r * Math.sin(angle);
+                if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+            }
+            ctx.closePath();
+            ctx.fillStyle = '#dceefb';
+            ctx.fill();
+            ctx.lineWidth = 7;
+            ctx.strokeStyle = '#64a1d8';
+            ctx.stroke();
+            ctx.restore();
+
+            let traceAlpha = 0;
+            if (lastMoveInfo && lastMoveInfo.timestamp) {
+                const elapsed = Date.now() - lastMoveInfo.timestamp;
+                if (elapsed < 2200) {
+                    traceAlpha = Math.max(0, 1 - (elapsed / 2200));
+                }
+            }
+
+            for (const [k, val] of Object.entries(boardObj)) {
+                const { q, r } = parseKey(k);
+                const { x, y } = hexToPixel(q, r);
+
+                ctx.beginPath();
+                ctx.arc(x, y, MARBLE_RADIUS - 2, 0, Math.PI * 2);
+                ctx.fillStyle = '#b6d8f2';
+                ctx.fill();
+                ctx.strokeStyle = '#8abce6';
+                ctx.lineWidth = 1.5;
+                ctx.stroke();
+
+                if (val === 1 || val === 2) {
+                    const isSelected = av_selected.some(s => s.q === q && s.r === r);
+                    const isMovedDest = traceAlpha > 0 && lastMoveInfo.toCells && lastMoveInfo.toCells.some(c => c.q === q && c.r === r);
+
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.arc(x, y, MARBLE_RADIUS, 0, Math.PI * 2);
+
+                    const grad = ctx.createRadialGradient(x - 7, y - 7, 3, x, y, MARBLE_RADIUS);
+                    if (val === 1) {
+                        grad.addColorStop(0, '#555');
+                        grad.addColorStop(0.4, '#1e272e');
+                        grad.addColorStop(1, '#000000');
+                    } else {
+                        grad.addColorStop(0, '#ffffff');
+                        grad.addColorStop(0.6, '#f1f2f6');
+                        grad.addColorStop(1, '#ced6e0');
+                    }
+                    ctx.fillStyle = grad;
+                    ctx.shadowColor = 'rgba(0,0,0,0.35)';
+                    ctx.shadowBlur = 5;
+                    ctx.shadowOffsetY = 3;
+                    ctx.fill();
+
+                    ctx.lineWidth = 1.5;
+                    ctx.strokeStyle = val === 1 ? '#111' : '#7f8c8d';
+                    ctx.stroke();
+
+                    if (isMovedDest) {
+                        ctx.lineWidth = 3.5;
+                        ctx.strokeStyle = `rgba(255, 71, 87, ${traceAlpha})`;
+                        ctx.stroke();
+                    }
+
+                    if (isSelected) {
+                        ctx.lineWidth = 4;
+                        ctx.strokeStyle = '#ffa502';
+                        ctx.stroke();
+                    }
+                    ctx.restore();
+                }
+            }
+
+            if (traceAlpha > 0 && lastMoveInfo.fromCells && lastMoveInfo.dir) {
+                ctx.save();
+                lastMoveInfo.fromCells.forEach(cell => {
+                    const startPos = hexToPixel(cell.q, cell.r);
+                    const endPos = hexToPixel(cell.q + lastMoveInfo.dir.q, cell.r + lastMoveInfo.dir.r);
+
+                    ctx.beginPath();
+                    ctx.setLineDash([4, 3]);
+                    ctx.arc(startPos.x, startPos.y, MARBLE_RADIUS - 4, 0, Math.PI * 2);
+                    ctx.strokeStyle = `rgba(255, 107, 129, ${traceAlpha * 0.85})`;
+                    ctx.lineWidth = 2.5;
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+
+                    const angle = Math.atan2(endPos.y - startPos.y, endPos.x - startPos.x);
+                    const headLen = 9;
+                    ctx.beginPath();
+                    ctx.moveTo(startPos.x, startPos.y);
+                    ctx.lineTo(endPos.x, endPos.y);
+                    ctx.strokeStyle = `rgba(255, 71, 87, ${traceAlpha * 0.95})`;
+                    ctx.lineWidth = 3;
+                    ctx.stroke();
+
+                    ctx.beginPath();
+                    ctx.moveTo(endPos.x, endPos.y);
+                    ctx.lineTo(endPos.x - headLen * Math.cos(angle - Math.PI / 6), endPos.y - headLen * Math.sin(angle - Math.PI / 6));
+                    ctx.lineTo(endPos.x - headLen * Math.cos(angle + Math.PI / 6), endPos.y - headLen * Math.sin(angle + Math.PI / 6));
+                    ctx.closePath();
+                    ctx.fillStyle = `rgba(255, 71, 87, ${traceAlpha * 0.95})`;
+                    ctx.fill();
+                });
+                ctx.restore();
+            }
+
+            for (const move of av_validMoves) {
+                const { x, y } = hexToPixel(move.targetQ, move.targetR);
+                ctx.save();
+                ctx.beginPath();
+                ctx.arc(x, y, 9, 0, Math.PI * 2);
+                ctx.fillStyle = move.type === 'push' ? '#ff4757' : '#2ed573';
+                ctx.shadowColor = 'rgba(0,0,0,0.5)'; ctx.shadowBlur = 4;
+                ctx.fill();
+                ctx.lineWidth = 2; ctx.strokeStyle = '#fff'; ctx.stroke();
+                ctx.restore();
+            }
+        }
+
+        function formatDuration(sec) {
+            const m = String(Math.floor(sec / 60)).padStart(2, '0');
+            const s = String(sec % 60).padStart(2, '0');
+            return `${m}분 ${s}초`;
+        }
+
+        function formatMatchDate(ts) {
+            if (!ts) return '날짜 기록 없음';
+            const d = new Date(ts);
+            if (isNaN(d.getTime())) return '날짜 기록 없음';
+            const yyyy = d.getFullYear();
+            const mm = String(d.getMonth() + 1).padStart(2, '0');
+            const dd = String(d.getDate()).padStart(2, '0');
+            const hh = String(d.getHours()).padStart(2, '0');
+            const min = String(d.getMinutes()).padStart(2, '0');
+            return `${yyyy}.${mm}.${dd} ${hh}:${min}`;
+        }
+
+        function escapeHtml(str) {
+            if (!str) return '';
+            return String(str).replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s]));
+        }
+    </script>
+</body>
+</html>
