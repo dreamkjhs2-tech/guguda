@@ -404,7 +404,8 @@
         let jk_pieces = [];
         let jk_isMoving = false;
         let jk_isMyShot = false;
-        let jk_selectedPiece = null;
+        let jk_selectedIdx = -1;
+        let jk_lastBoardSig = "";
         let jk_dragCurrent = { x: 0, y: 0 };
         let jk_lastProcessedShotId = 0;
         let jk_pendingPrevSnapshot = null;
@@ -881,10 +882,12 @@
                     ? '아래쪽 내 기물(漢)을 터치 후 뒤로 당겨 원 크기·화살표 길이(파워)와 각도를 조절하세요.'
                     : '아래쪽 내 기물(楚)을 터치 후 뒤로 당겨 원 크기·화살표 길이(파워)와 각도를 조절하세요.';
 
-                jk_pieces = deserializeJanggiPieces(getDefaultJanggiBoard());
+                const defBoard = getDefaultJanggiBoard();
+                jk_pieces = deserializeJanggiPieces(defBoard);
+                jk_lastBoardSig = JSON.stringify(defBoard);
                 jk_isMoving = false;
                 jk_isMyShot = false;
-                jk_selectedPiece = null;
+                jk_selectedIdx = -1;
                 jk_lastProcessedShotId = 0;
                 jk_pendingPrevSnapshot = null;
                 startJanggiLoop();
@@ -901,7 +904,6 @@
             roomRef.on('value', snapshot => {
                 const data = snapshot.val();
                 if (!data) {
-                    // 게임 도중 방장이 강제 종료/퇴장했을 때 참여자 측에서 기권승 보완 저장
                     if (myRole === 'guest' && currentRoomData && currentRoomData.status === 'playing' && !isFinishingMatch) {
                         isFinishingMatch = true;
                         const matchId = currentRoomData.currentMatchId || makeMatchId(currentRoomData.gameStartTime || Date.now());
@@ -920,7 +922,6 @@
                     lastKnownGuestName = data.guest.name;
                 }
 
-                // 상대 클라이언트가 기록한 대국 결과를 matchId 기준으로 1회 백업 저장(중복 없음)
                 if (data.lastMatchRecord && data.lastMatchRecord.matchId && data.lastMatchRecord.matchId !== lastSavedMatchId) {
                     lastSavedMatchId = data.lastMatchRecord.matchId;
                     if (currentGameId) {
@@ -1106,7 +1107,8 @@
             if (jk_animFrame) cancelAnimationFrame(jk_animFrame);
             roomRef = null; roomChatRef = null; currentRoomId = null; currentRoomData = null; myRole = null;
             lastKnownGuestName = ""; isFinishingMatch = false; lastSavedMatchId = "";
-            jk_isMoving = false; jk_isMyShot = false; jk_selectedPiece = null; jk_lastProcessedShotId = 0; jk_pendingPrevSnapshot = null;
+            jk_isMoving = false; jk_isMyShot = false; jk_selectedIdx = -1; jk_lastBoardSig = "";
+            jk_lastProcessedShotId = 0; jk_pendingPrevSnapshot = null;
             showScreen('lobbyScreen');
             if (currentGameId) {
                 attachLobbyListeners(currentGameId);
@@ -1153,7 +1155,8 @@
             const now = Date.now();
             const initialBoard = getInitialBoardForGame(currentGameId);
             av_selected = []; av_validMoves = [];
-            jk_isMoving = false; jk_isMyShot = false; jk_selectedPiece = null; jk_lastProcessedShotId = 0; jk_pendingPrevSnapshot = null;
+            jk_isMoving = false; jk_isMyShot = false; jk_selectedIdx = -1; jk_lastBoardSig = "";
+            jk_lastProcessedShotId = 0; jk_pendingPrevSnapshot = null;
             isFinishingMatch = false;
 
             roomRef.update({
@@ -1229,7 +1232,8 @@
                 if (!snap || snap.mover !== myTurnNum || !snap.boardState) {
                     alert('무르기는 내가 방금 튕긴 직후(상대방이 튕기기 전)에만 사용할 수 있습니다!'); return;
                 }
-                jk_selectedPiece = null;
+                jk_selectedIdx = -1;
+                jk_lastBoardSig = "";
                 roomRef.update({
                     boardState: snap.boardState,
                     turn: myTurnNum,
@@ -1287,7 +1291,6 @@
                     weekKey: weekKey
                 };
 
-                // 1) 승패 이력 먼저 저장
                 lastSavedMatchId = matchId;
                 db.ref(`${getGameBasePath(currentGameId)}/matchHistory/${matchId}`)
                     .set(matchRecord)
@@ -1297,7 +1300,6 @@
                     });
             }
 
-            // 2) 방 상태 업데이트 (undefined 값 제거 후 안전하게 전달)
             const updates = {
                 status: 'full',
                 winner: winnerNum,
@@ -1388,22 +1390,22 @@
         });
 
         window.addEventListener('pointermove', e => {
-            if (currentGameId === 'janggi' && jk_selectedPiece) {
+            if (currentGameId === 'janggi' && jk_selectedIdx !== -1) {
                 e.preventDefault();
                 handleJanggiMove(e);
             }
         }, { passive: false });
 
         window.addEventListener('pointerup', e => {
-            if (currentGameId === 'janggi' && jk_selectedPiece) {
+            if (currentGameId === 'janggi' && jk_selectedIdx !== -1) {
                 e.preventDefault();
                 handleJanggiEnd(e);
             }
         });
 
         window.addEventListener('pointercancel', () => {
-            if (currentGameId === 'janggi' && jk_selectedPiece) {
-                jk_selectedPiece = null;
+            if (currentGameId === 'janggi' && jk_selectedIdx !== -1) {
+                jk_selectedIdx = -1;
             }
         });
 
@@ -1672,7 +1674,7 @@
         }
 
         // ==========================================
-        // [게임 3] 장기 알까기 로직 (온라인 물리 동기화 + 참여자 180도 회전)
+        // [게임 3] 장기 알까기 로직 (온라인 물리 동기화 + 참여자 180도 회전 + 조준 보호)
         // ==========================================
         function isJanggiFlipped() {
             return currentGameId === 'janggi' && myRole === 'guest';
@@ -1779,14 +1781,21 @@
             if (data.status !== 'playing') {
                 jk_isMoving = false;
                 jk_isMyShot = false;
-                jk_selectedPiece = null;
+                jk_selectedIdx = -1;
                 jk_lastProcessedShotId = 0;
                 if (data.boardState) {
+                    jk_lastBoardSig = JSON.stringify(data.boardState);
                     jk_pieces = deserializeJanggiPieces(data.boardState);
                 }
                 return;
             }
 
+            // 일시정지되었거나 내 턴이 아니면 조준 해제
+            if (data.isPaused || data.turn !== myTurnNum) {
+                jk_selectedIdx = -1;
+            }
+
+            // 상대방이 발사한 샷 수신 시 동일 물리 애니메이션 재생
             if (data.activeShot && data.activeShot.shotId && data.activeShot.shotId !== jk_lastProcessedShotId) {
                 jk_lastProcessedShotId = data.activeShot.shotId;
                 if (data.activeShot.mover !== myTurnNum) {
@@ -1797,14 +1806,19 @@
                         target.vy = data.activeShot.vy;
                         jk_isMoving = true;
                         jk_isMyShot = false;
-                        jk_selectedPiece = null;
+                        jk_selectedIdx = -1;
                     }
                     return;
                 }
             }
 
-            if (!jk_isMoving && data.boardState) {
-                jk_pieces = deserializeJanggiPieces(data.boardState);
+            // 기물 이동 중이거나 드래그 조준 중이면 덮어쓰기 금지, boardState 실제 변경 시에만 동기화
+            if (!jk_isMoving && jk_selectedIdx === -1 && data.boardState) {
+                const sig = JSON.stringify(data.boardState);
+                if (sig !== jk_lastBoardSig) {
+                    jk_lastBoardSig = sig;
+                    jk_pieces = deserializeJanggiPieces(data.boardState);
+                }
             }
         }
 
@@ -1822,10 +1836,11 @@
             const myTeam = myRole === 'host' ? 'cho' : 'han';
             const pos = getJanggiPointerPos(e);
 
-            for (const p of jk_pieces) {
+            for (let i = 0; i < jk_pieces.length; i++) {
+                const p = jk_pieces[i];
                 if (!p.out && p.team === myTeam) {
                     if (Math.hypot(p.x - pos.x, p.y - pos.y) <= p.radius + 8) {
-                        jk_selectedPiece = p;
+                        jk_selectedIdx = i;
                         jk_dragCurrent = { x: pos.x, y: pos.y };
                         break;
                     }
@@ -1834,23 +1849,35 @@
         }
 
         function handleJanggiMove(e) {
-            if (!jk_selectedPiece) return;
+            if (jk_selectedIdx === -1) return;
             jk_dragCurrent = getJanggiPointerPos(e);
         }
 
         function handleJanggiEnd(e) {
-            if (!jk_selectedPiece) return;
+            if (jk_selectedIdx === -1) return;
 
-            const dx = jk_selectedPiece.x - jk_dragCurrent.x;
-            const dy = jk_selectedPiece.y - jk_dragCurrent.y;
+            const pieceIdx = jk_selectedIdx;
+            const piece = (pieceIdx >= 0 && pieceIdx < jk_pieces.length) ? jk_pieces[pieceIdx] : null;
+            jk_selectedIdx = -1;
+
+            if (!piece || piece.out) return;
+            if (!currentRoomData || currentRoomData.status !== 'playing' || currentRoomData.isPaused) return;
+
+            const myTurnNum = myRole === 'host' ? 1 : 2;
+            if (currentRoomData.turn !== myTurnNum) return;
+
+            const dx = piece.x - jk_dragCurrent.x;
+            const dy = piece.y - jk_dragCurrent.y;
             const dist = Math.hypot(dx, dy);
 
-            if (dist > 6 && currentRoomData && currentRoomData.status === 'playing' && !currentRoomData.isPaused) {
-                const pieceIdx = jk_pieces.indexOf(jk_selectedPiece);
-                const myTurnNum = myRole === 'host' ? 1 : 2;
+            if (dist > 6) {
                 const clampedDist = Math.min(dist, JK_MAX_PULL);
                 const powerRatio = clampedDist / JK_MAX_PULL;
-                const speed = powerRatio * jk_selectedPiece.maxSpeed;
+                const speed = powerRatio * piece.maxSpeed;
+
+                // 정지 임계치(0.15)보다 충분히 클 때만 발사 (미세 오작동으로 턴 낭비 방지)
+                if (speed <= 0.25) return;
+
                 const vx = (dx / dist) * speed;
                 const vy = (dy / dist) * speed;
 
@@ -1863,8 +1890,8 @@
                     boardState: startSnapshot
                 };
 
-                jk_selectedPiece.vx = vx;
-                jk_selectedPiece.vy = vy;
+                piece.vx = vx;
+                piece.vy = vy;
                 jk_isMoving = true;
                 jk_isMyShot = true;
 
@@ -1877,8 +1904,6 @@
                     startPieces: startSnapshot
                 });
             }
-
-            jk_selectedPiece = null;
         }
 
         function stepJanggiPhysics() {
@@ -1962,6 +1987,8 @@
 
             if (wasMyShot) {
                 const finalBoard = serializeJanggiPieces(jk_pieces);
+                jk_lastBoardSig = JSON.stringify(finalBoard);
+
                 const choKing = jk_pieces.find(p => p.team === 'cho' && p.isKing);
                 const hanKing = jk_pieces.find(p => p.team === 'han' && p.isKing);
 
@@ -1986,6 +2013,7 @@
                 jk_pendingPrevSnapshot = null;
             } else {
                 if (!currentRoomData.activeShot && currentRoomData.boardState) {
+                    jk_lastBoardSig = JSON.stringify(currentRoomData.boardState);
                     jk_pieces = deserializeJanggiPieces(currentRoomData.boardState);
                 }
             }
@@ -2122,9 +2150,11 @@
         }
 
         function drawJanggiAimGuide() {
-            if (!jk_selectedPiece) return;
+            if (jk_selectedIdx < 0 || jk_selectedIdx >= jk_pieces.length) return;
+            const piece = jk_pieces[jk_selectedIdx];
+            if (!piece || piece.out) return;
 
-            const sp = jkToScreen(jk_selectedPiece.x, jk_selectedPiece.y);
+            const sp = jkToScreen(piece.x, piece.y);
             const sd = jkToScreen(jk_dragCurrent.x, jk_dragCurrent.y);
 
             let dx = sp.x - sd.x;
@@ -2143,8 +2173,8 @@
             const dirX = dx / dist;
             const dirY = dy / dist;
 
-            const minCircleR = jk_selectedPiece.radius + 4;
-            const maxCircleR = jk_selectedPiece.radius + 34;
+            const minCircleR = piece.radius + 4;
+            const maxCircleR = piece.radius + 34;
             const dynamicCircleR = minCircleR + (maxCircleR - minCircleR) * powerRatio;
 
             const minArrowLen = 8;
