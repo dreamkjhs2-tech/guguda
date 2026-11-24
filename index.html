@@ -193,14 +193,14 @@
             z-index: 999;
             background: rgba(24, 34, 48, 0.96);
             color: #ffffff;
-            border: 2px solid #4dabf7;
+            border: 2px solid #2ecc71;
             border-radius: 16px;
             padding: 18px 24px;
             min-width: 260px;
             max-width: 88vw;
             text-align: center;
             box-shadow: 0 14px 34px rgba(0, 0, 0, 0.35);
-            transition: opacity 0.2s ease, transform 0.2s ease;
+            pointer-events: none;
         }
         .mem-turn-popup.show {
             display: flex;
@@ -397,7 +397,7 @@
 
     <!-- 턴 전환 안내 팝업 -->
     <div id="memTurnPopup" class="mem-turn-popup">
-        <span id="memTurnPopupBadge" class="mem-turn-popup-badge">턴 전환</span>
+        <span id="memTurnPopupBadge" class="mem-turn-popup-badge">턴 교체</span>
         <div id="memTurnPopupTitle" class="mem-turn-popup-title">턴이 넘어갑니다!</div>
         <div id="memTurnPopupSub" class="mem-turn-popup-sub">다음 차례를 준비하세요.</div>
     </div>
@@ -512,16 +512,16 @@
             <!-- 기억력 카드 25 (5x5) 보드 -->
             <div id="memoryBoardWrap" class="mem-board-wrap">
                 <div class="mem-status-bar">
-                    <span id="memStageText">1단계 / 25단계 · 전반(A→B)</span>
-                    <span id="memPhaseBadge" class="mem-phase-pill">A 출제 차례</span>
+                    <span id="memStageText">1단계 / 25단계 · 문제 1장</span>
+                    <span id="memPhaseBadge" class="mem-phase-pill">1P 출제 차례</span>
                 </div>
                 <div id="memVerdictBanner" class="mem-verdict-banner">
-                    카드를 열어 순서를 출제하거나 따라하세요!
+                    내 턴에 카드를 눌러 문제를 내고, 상대가 따라하면 턴이 넘어갑니다!
                 </div>
                 <div id="memGrid" class="mem-grid"></div>
                 <div class="mem-progress-strip">
                     <span id="memProgressText">출제 선택: 0 / 1장</span>
-                    <span id="memSubRuleText">A·B 교대 출제 · 중복 불가</span>
+                    <span id="memSubRuleText">출제 → 따라하기 → 맞으면 턴 교체</span>
                 </div>
             </div>
 
@@ -575,7 +575,7 @@
                 id: 'memory25',
                 title: '기억력 카드 25',
                 icon: '🃏🧠',
-                desc: 'A·B 번갈아 출제! 5×5 카드로 25단계 도전, 맞으면 ⭕ 틀리면 ❌!',
+                desc: '내 턴에 문제 내고 상대가 따라하면 턴 교체! 맞으면 ⭕ 틀리면 ❌!',
                 active: true
             }
         ];
@@ -672,7 +672,6 @@
         let mem_animStepNum = 0;
         let mem_lastTriggerId = 0;
         let mem_lastFlipId = 0;
-        let mem_lastTurnNoticeId = 0;
         let mem_tempRevealIdx = -1;
         let mem_wrongIdx = -1;
         let mem_justOkIdx = -1;
@@ -1163,15 +1162,14 @@
                 jk_pendingPrevSnapshot = null;
                 startJanggiLoop();
             } else if (currentGameId === 'memory25') {
-                hostRoleEl.innerText = '🅰️ A 플레이어 (선공/방장)';
-                guestRoleEl.innerText = '🅱️ B 플레이어 (후공/참여자)';
+                hostRoleEl.innerText = '1️⃣ 방장 (선공/방장)';
+                guestRoleEl.innerText = '2️⃣ 참여자 (후공/참여자)';
                 containerBox.style.background = '#eef2ff';
                 canvas.style.display = 'none';
                 guideEl.style.display = 'none';
                 memWrap.classList.add('active');
                 mem_lastTriggerId = 0;
                 mem_lastFlipId = 0;
-                mem_lastTurnNoticeId = 0;
                 mem_tempRevealIdx = -1;
                 mem_wrongIdx = -1;
                 mem_justOkIdx = -1;
@@ -1408,7 +1406,7 @@
             jk_isMoving = false; jk_isMyShot = false; jk_selectedIdx = -1; jk_lastBoardSig = "";
             jk_lastProcessedShotId = 0; jk_pendingPrevSnapshot = null;
             mem_isPlayingAnim = false; mem_animMode = null; mem_animActiveIdx = -1;
-            mem_lastTriggerId = 0; mem_lastFlipId = 0; mem_lastTurnNoticeId = 0;
+            mem_lastTriggerId = 0; mem_lastFlipId = 0;
             mem_tempRevealIdx = -1; mem_wrongIdx = -1; mem_justOkIdx = -1;
             mem_matchedIndices = [];
             showScreen('lobbyScreen');
@@ -1462,7 +1460,7 @@
             clearMemoryTimers();
             hideMemoryTurnPopup();
             mem_isPlayingAnim = false; mem_animMode = null; mem_animActiveIdx = -1;
-            mem_lastTriggerId = 0; mem_lastFlipId = 0; mem_lastTurnNoticeId = 0;
+            mem_lastTriggerId = 0; mem_lastFlipId = 0;
             mem_tempRevealIdx = -1; mem_wrongIdx = -1; mem_justOkIdx = -1;
             mem_matchedIndices = [];
             isFinishingMatch = false;
@@ -1756,7 +1754,8 @@
         });
 
         // ==========================================
-        // [게임 4] 기억력 카드 25 (정답/오답 카드 판정 + 턴 전환 팝업 안내)
+        // [게임 4] 기억력 카드 25
+        // 흐름: 내 턴에 내가 문제 내기 -> 상대방이 따라하기 -> 맞으면 턴 교체(다음 출제자로 전환)
         // ==========================================
         function clearMemoryTimers() {
             mem_timers.forEach(t => clearTimeout(t));
@@ -1771,7 +1770,7 @@
             }
         }
 
-        function showMemoryTurnPopup(badgeText, titleText, subText, durationMs = 1700) {
+        function showMemoryTurnPopup(badgeText, titleText, subText, durationMs = 1500) {
             const popup = document.getElementById('memTurnPopup');
             const badgeEl = document.getElementById('memTurnPopupBadge');
             const titleEl = document.getElementById('memTurnPopupTitle');
@@ -1813,18 +1812,23 @@
         function getDefaultMemory25State(seedTs = Date.now()) {
             return {
                 icons: createShuffledIcons(),
-                stage: 1,              // 1 ~ 25 단계
-                half: 1,               // 1: A출제 -> B도전, 2: B출제 -> A도전
-                phase: 'author',       // 'author' | 'challenge'
-                authorRoleNum: 1,      // 1(A) 또는 2(B)
+                stage: 1,              // 1 ~ 25 단계 (출제 카드 수 = stage)
+                phase: 'author',       // 'author'(현재 turn이 문제 출제) | 'challenge'(현재 turn이 따라하기)
                 targetSequence: [],    // 출제된 카드 인덱스 배열
                 guessProgress: [],     // 도전자가 맞춘 카드 인덱스 배열
-                liveFlip: null,        // { id, cardIdx, status: 'ok' | 'ng', stepNum, totalSteps, expectedCardIdx }
-                turnNotice: null,      // { id, badge, title, sub }
+                liveFlip: null,        // { id, cardIdx, status: 'ok' | 'ng', expectedCardIdx }
                 revealTrigger: null,   // { id, mover, sequence }
                 replayTrigger: null,   // { id, mover, sequence }
                 seed: seedTs
             };
+        }
+
+        function getPlayerLabel(turnNum) {
+            if (!currentRoomData) return turnNum === 1 ? '1P' : '2P';
+            const name = turnNum === 1
+                ? (currentRoomData.host ? currentRoomData.host.name : '방장')
+                : (currentRoomData.guest ? currentRoomData.guest.name : '참여자');
+            return `${name}(${turnNum === 1 ? '방장' : '참여자'})`;
         }
 
         function playMemorySequenceAnimation(sequence, mode) {
@@ -1905,17 +1909,6 @@
                 return;
             }
 
-            // 턴 전환 팝업 동기화
-            if (mem.turnNotice && mem.turnNotice.id && mem.turnNotice.id !== mem_lastTurnNoticeId) {
-                mem_lastTurnNoticeId = mem.turnNotice.id;
-                showMemoryTurnPopup(
-                    mem.turnNotice.badge || '턴 전환',
-                    mem.turnNotice.title || '턴이 넘어갑니다!',
-                    mem.turnNotice.sub || '',
-                    1750
-                );
-            }
-
             // 상대가 따라할 때 방금 뒤집은 카드의 ⭕ / ❌ 상태 동기화
             if (mem.liveFlip && mem.liveFlip.id && mem.liveFlip.id !== mem_lastFlipId) {
                 mem_lastFlipId = mem.liveFlip.id;
@@ -1941,7 +1934,7 @@
                 }
             }
 
-            // 상대가 출제를 마쳐서 시퀀스 공개가 트리거된 경우
+            // 출제 완료 시 시퀀스 공개 재생
             if (mem.revealTrigger && mem.revealTrigger.id && mem.revealTrigger.id !== mem_lastTriggerId) {
                 mem_lastTriggerId = mem.revealTrigger.id;
                 mem_matchedIndices = [];
@@ -1954,7 +1947,7 @@
                 }
             }
 
-            // 상대가 [한번 더보기]를 눌러 다시 재생이 트리거된 경우
+            // [한번 더보기] 재생 동기화
             if (mem.replayTrigger && mem.replayTrigger.id && mem.replayTrigger.id !== mem_lastTriggerId) {
                 mem_lastTriggerId = mem.replayTrigger.id;
                 mem_matchedIndices = [];
@@ -1986,12 +1979,9 @@
             if (!mem) return;
 
             const stage = Number(mem.stage) || 1;
-            const half = Number(mem.half) || 1;
             const opponentTurnNum = myTurnNum === 1 ? 2 : 1;
-            const hostName = currentRoomData.host ? currentRoomData.host.name : 'A';
-            const guestName = currentRoomData.guest ? currentRoomData.guest.name : 'B';
 
-            // [1] 출제 차례: stage 개만큼 서로 다른 카드를 순서대로 선택
+            // [1] 내 턴 - 문제 출제 단계: stage장만큼 순서대로 선택
             if (mem.phase === 'author') {
                 const currentSeq = Array.isArray(mem.targetSequence) ? [...mem.targetSequence] : [];
                 if (currentSeq.includes(cardIdx)) return;
@@ -2014,26 +2004,14 @@
                         'boardState/targetSequence': currentSeq
                     });
                 } else {
-                    // 출제 완료 -> 상대방 따라하기(challenge) 턴으로 전환 및 시퀀스 공개 재생
+                    // 출제 완료 -> 상대방(opponentTurnNum)에게 따라하기 턴 넘김
                     const triggerId = Date.now();
-                    const noticeId = triggerId + 1;
-                    const challengerName = opponentTurnNum === 1 ? `${hostName}(A)` : `${guestName}(B)`;
-                    const turnNoticeObj = {
-                        id: noticeId,
-                        badge: `${stage}단계 출제 완료`,
-                        title: `${challengerName} 따라하기 턴!`,
-                        sub: `순서를 잘 기억한 뒤 ${stage}장의 카드를 순서대로 열어보세요.`
-                    };
-
                     mem_lastTriggerId = triggerId;
-                    mem_lastTurnNoticeId = noticeId;
-                    showMemoryTurnPopup(turnNoticeObj.badge, turnNoticeObj.title, turnNoticeObj.sub, 1650);
 
                     roomRef.update({
                         'boardState/targetSequence': currentSeq,
                         'boardState/guessProgress': [],
                         'boardState/liveFlip': null,
-                        'boardState/turnNotice': turnNoticeObj,
                         'boardState/phase': 'challenge',
                         'boardState/revealTrigger': {
                             id: triggerId,
@@ -2044,12 +2022,14 @@
                         turnStartTime: Date.now(),
                         remainingWhenPaused: 60
                     });
+
+                    // 출제자 본인 화면에서도 방금 낸 순서를 1번부터 보여줌
                     playMemorySequenceAnimation(currentSeq, 'preview');
                 }
                 return;
             }
 
-            // [2] 따라하기(도전) 차례: 카드 뒤집기 + 맞으면 ⭕, 틀리면 ❌ 후 패배창 띄움
+            // [2] 내 턴 - 따라하기 단계: 카드 뒤집기 -> 맞으면 ⭕, 틀리면 ❌ 후 패배 / 다 맞추면 턴 교체
             if (mem.phase === 'challenge') {
                 const targetSeq = Array.isArray(mem.targetSequence) ? mem.targetSequence : [];
                 const progress = Array.isArray(mem.guessProgress) ? [...mem.guessProgress] : [];
@@ -2076,8 +2056,6 @@
                         id: flipId,
                         cardIdx: cardIdx,
                         status: 'ok',
-                        stepNum: progress.length,
-                        totalSteps: targetSeq.length,
                         expectedCardIdx: expectedCardIdx
                     };
 
@@ -2088,82 +2066,46 @@
                             'boardState/liveFlip': okFlipObj
                         });
                     } else {
-                        // 현재 공수 성공! -> 턴 전환 팝업 안내와 함께 공수/단계 전환
+                        // 마지막 카드까지 정확히 맞춤 -> 맞았으므로 턴 교체! (다음 단계로 넘어가며 현재 플레이어가 출제자)
                         mem_matchedIndices = [];
-                        const noticeId = Date.now() + 2;
-                        mem_lastTurnNoticeId = noticeId;
-
-                        if (half === 1) {
-                            const nextAuthor = 2; // 후반은 B(2)가 출제
-                            const turnNoticeObj = {
-                                id: noticeId,
-                                badge: `⭕ ${stage}단계 전반 성공 · 턴 전환`,
-                                title: `이제 ${guestName}(B) 출제 차례!`,
-                                sub: `B가 ${stage}장 순서를 출제하면 A가 따라합니다.`
-                            };
-                            pushRoomSystemChat(`⭕ ${stage}단계 전반 성공! 이제 B가 출제하고 A가 따라합니다.`);
-                            showMemoryTurnPopup(turnNoticeObj.badge, turnNoticeObj.title, turnNoticeObj.sub, 1850);
+                        if (stage >= MEM_MAX_STAGE) {
+                            finishGame(myTurnNum, `25단계 완주 성공`, {
+                                'boardState/guessProgress': progress,
+                                'boardState/liveFlip': okFlipObj
+                            });
+                        } else {
+                            const nextStage = stage + 1;
+                            const nextTurn = myTurnNum; // 맞았으므로 턴 교체: 다음 단계 문제를 내가 출제
+                            showMemoryTurnPopup(
+                                `⭕ ${stage}단계 성공 · 턴 교체!`,
+                                `내 턴! ${nextStage}단계 문제 출제 차례`,
+                                `카드 ${nextStage}장을 순서대로 눌러 문제를 내세요.`,
+                                1500
+                            );
+                            pushRoomSystemChat(`⭕ ${myNickname}님 ${stage}단계 성공! 턴이 교체되어 ${nextStage}단계 출제 차례입니다.`);
 
                             roomRef.update({
-                                'boardState/half': 2,
+                                'boardState/stage': nextStage,
                                 'boardState/phase': 'author',
-                                'boardState/authorRoleNum': nextAuthor,
                                 'boardState/targetSequence': [],
                                 'boardState/guessProgress': [],
-                                'boardState/liveFlip': okFlipObj,
-                                'boardState/turnNotice': turnNoticeObj,
+                                'boardState/liveFlip': null,
                                 'boardState/revealTrigger': null,
                                 'boardState/replayTrigger': null,
-                                turn: nextAuthor,
+                                turn: nextTurn,
                                 turnStartTime: Date.now(),
                                 remainingWhenPaused: 60
                             });
-                        } else {
-                            if (stage >= MEM_MAX_STAGE) {
-                                finishGame(myTurnNum, `25단계 완주 성공`, {
-                                    'boardState/guessProgress': progress,
-                                    'boardState/liveFlip': okFlipObj
-                                });
-                            } else {
-                                const nextStage = stage + 1;
-                                const nextAuthor = 1; // 다음 단계 전반은 A(1)가 출제
-                                const turnNoticeObj = {
-                                    id: noticeId,
-                                    badge: `⭕ ${stage}단계 통과 · ${nextStage}단계 진입`,
-                                    title: `이제 ${hostName}(A) 출제 차례!`,
-                                    sub: `${nextStage}단계(${nextStage}장 순서) 전반 출제를 시작합니다.`
-                                };
-                                pushRoomSystemChat(`⭕ ${stage}단계 통과! ${nextStage}단계(${nextStage}장 순서) 전반 A 출제로 시작합니다.`);
-                                showMemoryTurnPopup(turnNoticeObj.badge, turnNoticeObj.title, turnNoticeObj.sub, 1850);
-
-                                roomRef.update({
-                                    'boardState/stage': nextStage,
-                                    'boardState/half': 1,
-                                    'boardState/phase': 'author',
-                                    'boardState/authorRoleNum': nextAuthor,
-                                    'boardState/targetSequence': [],
-                                    'boardState/guessProgress': [],
-                                    'boardState/liveFlip': okFlipObj,
-                                    'boardState/turnNotice': turnNoticeObj,
-                                    'boardState/revealTrigger': null,
-                                    'boardState/replayTrigger': null,
-                                    turn: nextAuthor,
-                                    turnStartTime: Date.now(),
-                                    remainingWhenPaused: 60
-                                });
-                            }
                         }
                     }
                 } else {
-                    // 순서 오답 -> ❌ 표시 후 패배창 띄움
+                    // 순서 다름 -> ❌ 표시 후 패배 처리
                     mem_wrongIdx = cardIdx;
                     mem_justOkIdx = -1;
                     const ngFlipObj = {
                         id: flipId,
                         cardIdx: cardIdx,
                         status: 'ng',
-                        stepNum: stepIndex + 1,
-                        totalSteps: targetSeq.length,
                         expectedCardIdx: expectedCardIdx
                     };
                     renderMemory25Board({ ...mem, liveFlip: ngFlipObj });
@@ -2173,7 +2115,7 @@
 
                     mem_wrongTimer = setTimeout(() => {
                         mem_wrongIdx = -1;
-                        finishGame(opponentTurnNum, `${stage}단계 순서 실수`, {
+                        finishGame(opponentTurnNum, `${stage}단계 순서 다름`, {
                             'boardState/guessProgress': progress,
                             'boardState/liveFlip': ngFlipObj
                         });
@@ -2192,36 +2134,34 @@
             if (!grid || !mem) return;
 
             const stage = Number(mem.stage) || 1;
-            const half = Number(mem.half) || 1;
             const phase = mem.phase || 'author';
-            const authorRoleNum = half === 1 ? 1 : 2;
-            const authorLabel = authorRoleNum === 1 ? 'A' : 'B';
-            const challengerLabel = authorRoleNum === 1 ? 'B' : 'A';
+            const activeTurnNum = currentRoomData ? (currentRoomData.turn || 1) : 1;
+            const activeLabel = getPlayerLabel(activeTurnNum);
             const targetSeq = Array.isArray(mem.targetSequence) ? mem.targetSequence : [];
             const progress = Array.isArray(mem.guessProgress) ? mem.guessProgress : [];
             const icons = Array.isArray(mem.icons) && mem.icons.length === MEM_TOTAL_CARDS
                 ? mem.icons
                 : MEM_ICONS.slice(0, MEM_TOTAL_CARDS);
 
-            stageEl.innerText = `${stage}단계 / ${MEM_MAX_STAGE}단계 · ${half === 1 ? '전반(A→B)' : '후반(B→A)'}`;
+            stageEl.innerText = `${stage}단계 / ${MEM_MAX_STAGE}단계 · 문제 ${stage}장`;
 
             if (mem_isPlayingAnim) {
                 phaseBadge.className = 'mem-phase-pill watch';
                 phaseBadge.innerText = mem_animMode === 'replay'
-                    ? `다시보기 재생 (${mem_animStepNum}/${targetSeq.length})`
-                    : `순서 공개 중 (${mem_animStepNum}/${targetSeq.length})`;
+                    ? `다시보기 (${mem_animStepNum}/${targetSeq.length})`
+                    : `순서 공개 (${mem_animStepNum}/${targetSeq.length})`;
                 progressEl.innerText = `공개 진행: ${mem_animStepNum} / ${targetSeq.length}장`;
                 verdictEl.className = 'mem-verdict-banner';
                 verdictEl.innerText = `👀 ${mem_animStepNum}번째 카드(${mem_animActiveIdx >= 0 ? (mem_animActiveIdx + 1) + '번' : '준비'}) 순서를 기억하세요!`;
             } else if (phase === 'author') {
                 phaseBadge.className = 'mem-phase-pill';
-                phaseBadge.innerText = `${authorLabel} 출제 차례`;
+                phaseBadge.innerText = `${activeLabel} 출제 차례`;
                 progressEl.innerText = `출제 선택: ${targetSeq.length} / ${stage}장`;
                 verdictEl.className = 'mem-verdict-banner';
-                verdictEl.innerText = `✏️ ${authorLabel}가 카드 ${stage}장을 순서대로 선택해 출제합니다. (${targetSeq.length}/${stage})`;
+                verdictEl.innerText = `✏️ ${activeLabel}가 카드 ${stage}장을 순서대로 눌러 출제합니다. (${targetSeq.length}/${stage})`;
             } else {
                 phaseBadge.className = 'mem-phase-pill challenge';
-                phaseBadge.innerText = `${challengerLabel} 따라하기 차례`;
+                phaseBadge.innerText = `${activeLabel} 따라하기 차례`;
                 progressEl.innerText = `따라하기: ${progress.length} / ${targetSeq.length}장`;
 
                 const lf = mem.liveFlip;
@@ -2236,11 +2176,11 @@
                     verdictEl.innerText = `⭕ 맞았습니다! ${okCardNum}번 카드 일치 (${progress.length}/${targetSeq.length}장 완료)`;
                 } else {
                     verdictEl.className = 'mem-verdict-banner';
-                    verdictEl.innerText = `🔍 ${challengerLabel} 차례: 1번째 카드를 열어 순서를 맞춰보세요!`;
+                    verdictEl.innerText = `🔍 ${activeLabel} 차례: 출제된 순서대로 카드를 열어보세요!`;
                 }
             }
 
-            subRuleEl.innerText = 'A·B 교대 출제 · 중복 불가';
+            subRuleEl.innerText = '출제 → 따라하기 → 맞으면 턴 교체';
 
             const myTurnNum = myRole === 'host' ? 1 : 2;
             const canInteract = !!(
@@ -3137,7 +3077,7 @@
                 document.getElementById('roomScoreText').innerText = `남은 기물: 초 ${choLeft} vs 한 ${hanLeft} (전적 ${hWins}:${gWins})`;
             } else if (currentGameId === 'memory25') {
                 const curStage = (data.boardState && data.boardState.stage) ? data.boardState.stage : 1;
-                document.getElementById('roomScoreText').innerText = `현재 ${curStage}/${MEM_MAX_STAGE}단계 · 전적 A ${hWins}:${gWins} B`;
+                document.getElementById('roomScoreText').innerText = `현재 ${curStage}/${MEM_MAX_STAGE}단계 · 전적 ${hWins}:${gWins}`;
             }
 
             document.getElementById('hostNameDisplay').innerText = data.host.name;
